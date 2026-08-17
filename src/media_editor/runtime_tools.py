@@ -1,0 +1,42 @@
+import os
+from pathlib import Path
+import shutil
+import sys
+
+
+def find_runtime_tool(name: str) -> str:
+    """배포 bundle과 PATH에서 외부 실행 파일을 찾는다."""
+    executable_name = f"{name}.exe" if sys.platform == "win32" else name
+
+    for directory in _runtime_tool_directories():
+        candidate = directory / executable_name
+        if candidate.is_file():
+            return str(candidate)
+
+    path = shutil.which(executable_name)
+    if path is not None:
+        return path
+
+    raise FileNotFoundError(
+        f"{name}를 찾을 수 없습니다. 앱과 함께 제공된 tool 또는 system PATH를 "
+        "확인해 주세요."
+    )
+
+
+def _runtime_tool_directories() -> list[Path]:
+    """지원하는 배포 형태별 bundled tool 검색 경로를 반환한다."""
+    directories: list[Path] = []
+
+    appdir = os.environ.get("APPDIR")
+    if appdir:
+        directories.append(Path(appdir) / "usr" / "bin")
+
+    executable_dir = Path(sys.executable).resolve().parent
+    directories.extend(
+        [
+            executable_dir / "bin",
+            executable_dir,
+        ]
+    )
+
+    return directories
