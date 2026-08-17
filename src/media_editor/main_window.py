@@ -1,14 +1,13 @@
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, QUrl, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QImage
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -22,15 +21,25 @@ from PySide6.QtWidgets import (
 )
 
 from media_editor.ffmpeg import (
+    build_crop_command,
     build_mp4_export_command,
+    build_resize_command,
+    build_rotate_command,
     build_trim_command,
     build_upscale_command,
+    make_edit_output_path,
     make_mp4_output_path,
     make_trim_output_path,
     make_upscale_output_path,
 )
 from media_editor.media import MediaKind, format_duration
 from media_editor.project import MediaAsset, MediaProject
+from media_editor.transform_dialogs import (
+    CropDialog,
+    ResizeDialog,
+    RotateDialog,
+    UpscaleDialog,
+)
 from media_editor.trim_dialog import TrimDialog
 from media_editor.widgets import DropPreviewWidget
 
@@ -39,7 +48,7 @@ ASSET_ROLE = Qt.ItemDataRole.UserRole
 
 
 class MainWindow(QMainWindow):
-    """Media library와 preview를 제공하는 Media Editor 주 창."""
+    """Media library와 GUI 기반 편집 기능을 제공하는 주 창."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -70,6 +79,11 @@ class MainWindow(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_file_dialog)
         self.addAction(open_action)
+
+        remove_action = QAction("Remove Media", self)
+        remove_action.setShortcut("Delete")
+        remove_action.triggered.connect(self._remove_selected_media)
+        self.addAction(remove_action)
 
         central = QWidget()
         central.setObjectName("root")
@@ -105,16 +119,30 @@ class MainWindow(QMainWindow):
         library_card.setObjectName("libraryCard")
         library_layout = QVBoxLayout(library_card)
         library_layout.setContentsMargins(14, 14, 14, 14)
+        library_layout.setSpacing(10)
 
+        library_header = QHBoxLayout()
         library_title = QLabel("MEDIA")
         library_title.setObjectName("sectionTitle")
+        self.add_media_button = QPushButton("+ Add")
+        self.add_media_button.setObjectName("secondaryButton")
+        self.add_media_button.clicked.connect(self._open_file_dialog)
+        self.remove_media_button = QPushButton("− Remove")
+        self.remove_media_button.setObjectName("secondaryButton")
+        self.remove_media_button.clicked.connect(self._remove_selected_media)
+
+        library_header.addWidget(library_title)
+        library_header.addStretch()
+        library_header.addWidget(self.add_media_button)
+        library_header.addWidget(self.remove_media_button)
+
         self.media_list = QListWidget()
         self.media_list.setObjectName("mediaList")
         self.media_list.currentItemChanged.connect(
             self._on_library_selection_changed
         )
 
-        library_layout.addWidget(library_title)
+        library_layout.addLayout(library_header)
         library_layout.addWidget(self.media_list)
         splitter.addWidget(library_card)
 
@@ -139,7 +167,7 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self.preview, stretch=1)
         preview_layout.addWidget(self.file_info)
         splitter.addWidget(preview_container)
-        splitter.setSizes([230, 850])
+        splitter.setSizes([250, 830])
 
         main_layout.addWidget(splitter, stretch=1)
 
@@ -169,28 +197,33 @@ class MainWindow(QMainWindow):
         self.trim_button = QPushButton("Trim")
         self.crop_button = QPushButton("Crop")
         self.resize_button = QPushButton("Resize")
+        self.rotate_button = QPushButton("Rotate")
         self.upscale_button = QPushButton("Upscale")
         self.export_button = QPushButton("Export MP4")
 
-        self.trim_button.setObjectName("toolButton")
-        self.trim_button.clicked.connect(self._request_trim)
-
-        self.upscale_button.setObjectName("toolButton")
-        self.upscale_button.clicked.connect(self._request_upscale)
-
-        self.export_button.setObjectName("toolButton")
-        self.export_button.clicked.connect(self._request_mp4_export)
-
-        for button in (self.crop_button, self.resize_button):
+        for button in (
+            self.trim_button,
+            self.crop_button,
+            self.resize_button,
+            self.rotate_button,
+            self.upscale_button,
+            self.export_button,
+        ):
             button.setObjectName("toolButton")
-            button.setEnabled(False)
-            button.setToolTip("다음 개발 단계에서 구현할 기능입니다.")
+
+        self.trim_button.clicked.connect(self._request_trim)
+        self.crop_button.clicked.connect(self._request_crop)
+        self.resize_button.clicked.connect(self._request_resize)
+        self.rotate_button.clicked.connect(self._request_rotate)
+        self.upscale_button.clicked.connect(self._request_upscale)
+        self.export_button.clicked.connect(self._request_mp4_export)
 
         controls_layout.addWidget(self.play_button)
         controls_layout.addSpacing(8)
         controls_layout.addWidget(self.trim_button)
         controls_layout.addWidget(self.crop_button)
         controls_layout.addWidget(self.resize_button)
+        controls_layout.addWidget(self.rotate_button)
         controls_layout.addWidget(self.upscale_button)
         controls_layout.addStretch()
         controls_layout.addWidget(self.export_button)
@@ -248,8 +281,39 @@ class MainWindow(QMainWindow):
         if self.media_list.currentItem() is None and self.media_list.count() > 0:
             self.media_list.setCurrentRow(0)
 
+        self._update_media_tools()
         if errors:
             self._show_error("\n".join(errors))
+
+    def _remove_selected_media(self) -> None:
+        if self._ffmpeg_process is not None:
+            return
+
+        row = self.media_list.currentRow()
+        if row < 0:
+            return
+
+        item = self.media_list.item(row)
+        asset = item.data(ASSET_ROLE)
+        if not isinstance(asset, MediaAsset):
+            return
+
+        self.player.stop()
+        self.project.remove(asset)
+        self.media_list.takeItem(row)
+
+        if self.media_list.count() == 0:
+            self.current_asset = None
+            self.player.setSource(QUrl())
+            self.preview.show_empty()
+            self.file_info.setText(
+                "파일을 import하거나 preview 영역에 드래그 앤 드롭하세요."
+            )
+            self._update_playback_controls(False)
+            self._update_media_tools()
+            return
+
+        self.media_list.setCurrentRow(min(row, self.media_list.count() - 1))
 
     def _select_asset_path(self, path: Path) -> None:
         resolved = path.resolve()
@@ -293,6 +357,21 @@ class MainWindow(QMainWindow):
         self.player.setSource(QUrl.fromLocalFile(str(asset.path)))
         self._update_playback_controls(True)
 
+    def _current_media_size(self) -> tuple[int, int] | None:
+        if self.current_asset is None:
+            return None
+
+        if self.current_asset.kind is MediaKind.IMAGE:
+            image = QImage(str(self.current_asset.path))
+            if image.isNull():
+                return None
+            return image.width(), image.height()
+
+        size = self.video_widget.videoSink().videoSize()
+        if not size.isValid() or size.width() <= 0 or size.height() <= 0:
+            return None
+        return size.width(), size.height()
+
     def _update_playback_controls(self, enabled: bool) -> None:
         self.play_button.setEnabled(enabled)
         self.timeline.setEnabled(enabled)
@@ -308,6 +387,11 @@ class MainWindow(QMainWindow):
         has_asset = self.current_asset is not None
         has_video = has_asset and self.current_asset.kind is MediaKind.VIDEO
 
+        self.add_media_button.setEnabled(not busy)
+        self.remove_media_button.setEnabled(has_asset and not busy)
+        self.crop_button.setEnabled(has_asset and not busy)
+        self.resize_button.setEnabled(has_asset and not busy)
+        self.rotate_button.setEnabled(has_asset and not busy)
         self.upscale_button.setEnabled(has_asset and not busy)
         self.trim_button.setEnabled(has_video and not busy)
         self.export_button.setEnabled(has_video and not busy)
@@ -328,11 +412,7 @@ class MainWindow(QMainWindow):
             return
 
         self.player.pause()
-        dialog = TrimDialog(
-            duration_ms,
-            self.player.position(),
-            self,
-        )
+        dialog = TrimDialog(duration_ms, self.player.position(), self)
         if not dialog.exec():
             return
 
@@ -350,37 +430,118 @@ class MainWindow(QMainWindow):
 
         self._start_ffmpeg_job(command, output_path, "Trim")
 
+    def _request_crop(self) -> None:
+        if self.current_asset is None or self._ffmpeg_process is not None:
+            return
+
+        media_size = self._current_media_size()
+        if media_size is None:
+            self._show_error(
+                "미디어 해상도를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
+            )
+            return
+
+        dialog = CropDialog(*media_size, self)
+        if not dialog.exec():
+            return
+
+        x, y, width, height = dialog.crop_rect
+        output_path = make_edit_output_path(
+            self.current_asset.path,
+            self.current_asset.kind,
+            "cropped",
+        )
+        try:
+            command = build_crop_command(
+                self.current_asset.path,
+                output_path,
+                self.current_asset.kind,
+                x,
+                y,
+                width,
+                height,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+
+        self._start_ffmpeg_job(command, output_path, "Crop")
+
+    def _request_resize(self) -> None:
+        if self.current_asset is None or self._ffmpeg_process is not None:
+            return
+
+        media_size = self._current_media_size()
+        if media_size is None:
+            self._show_error(
+                "미디어 해상도를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
+            )
+            return
+
+        dialog = ResizeDialog(*media_size, self)
+        if not dialog.exec():
+            return
+
+        width, height = dialog.output_size
+        output_path = make_edit_output_path(
+            self.current_asset.path,
+            self.current_asset.kind,
+            "resized",
+        )
+        try:
+            command = build_resize_command(
+                self.current_asset.path,
+                output_path,
+                self.current_asset.kind,
+                width,
+                height,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+
+        self._start_ffmpeg_job(command, output_path, "Resize")
+
+    def _request_rotate(self) -> None:
+        if self.current_asset is None or self._ffmpeg_process is not None:
+            return
+
+        dialog = RotateDialog(self)
+        if not dialog.exec():
+            return
+
+        output_path = make_edit_output_path(
+            self.current_asset.path,
+            self.current_asset.kind,
+            "rotated",
+        )
+        try:
+            command = build_rotate_command(
+                self.current_asset.path,
+                output_path,
+                self.current_asset.kind,
+                dialog.degrees,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+
+        self._start_ffmpeg_job(command, output_path, "Rotate")
+
     def _request_upscale(self) -> None:
         if self.current_asset is None or self._ffmpeg_process is not None:
             return
 
-        choices = ["Standard 2×", "Standard 4×", "AI Upscale (준비 중)"]
-        choice, accepted = QInputDialog.getItem(
-            self,
-            "Upscale",
-            "Upscale mode",
-            choices,
-            0,
-            False,
-        )
-        if not accepted:
+        dialog = UpscaleDialog(self)
+        if not dialog.exec():
             return
 
-        if choice.startswith("AI"):
-            QMessageBox.information(
-                self,
-                "AI Upscale",
-                "AI Upscale은 다음 단계에서 Real-ESRGAN backend로 추가할 예정입니다.",
-            )
-            return
-
-        scale = 2 if "2×" in choice else 4
+        scale = dialog.scale
         output_path = make_upscale_output_path(
             self.current_asset.path,
             self.current_asset.kind,
             scale,
         )
-
         try:
             command = build_upscale_command(
                 self.current_asset.path,
