@@ -1,4 +1,8 @@
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -14,7 +18,7 @@ from PySide6.QtWidgets import (
 
 
 class TrimDialog(QDialog):
-    """슬라이더와 시간 입력으로 영상 trim 구간을 선택한다."""
+    """실제 영상을 재생하면서 trim 구간을 선택한다."""
 
     def __init__(
         self,
@@ -25,21 +29,44 @@ class TrimDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Trim Video")
         self.setModal(True)
-        self.setMinimumWidth(580)
+        self.resize(820, 720)
+        self.setMinimumSize(700, 620)
 
         self._duration_ms = duration_ms
-        self._current_position_ms = current_position_ms
         self._syncing = False
+        self._seek_dragging = False
 
-        description = QLabel(
-            "남길 구간의 시작과 끝을 슬라이더로 조절하세요. "
-            "현재 preview 위치를 시작/끝으로 바로 지정할 수 있습니다."
-        )
-        description.setWordWrap(True)
-        description.setObjectName("dialogDescription")
+        media_path = self._current_media_path(parent)
+        self.audio_output = QAudioOutput(self)
+        self.player = QMediaPlayer(self)
+        self.video_widget = QVideoWidget(self)
+        self.video_widget.setMinimumHeight(360)
+        self.player.setAudioOutput(self.audio_output)
+        self.player.setVideoOutput(self.video_widget)
+        if media_path is not None:
+            self.player.setSource(QUrl.fromLocalFile(str(media_path)))
 
-        self.start_slider = self._create_slider()
-        self.end_slider = self._create_slider()
+        self.play_button = QPushButton("▶ Play")
+        self.play_button.setObjectName("primaryButton")
+        self.play_button.clicked.connect(self._toggle_playback)
+
+        self.preview_position = QSlider(Qt.Orientation.Horizontal)
+        self.preview_position.setRange(0, duration_ms)
+        self.preview_position.setValue(current_position_ms)
+        self.preview_position.sliderPressed.connect(self._on_seek_pressed)
+        self.preview_position.sliderReleased.connect(self._seek_released)
+        self.preview_position.sliderMoved.connect(self._preview_seek_label)
+
+        self.preview_time = QLabel(self._format_time(current_position_ms))
+        self.preview_time.setObjectName("timeLabel")
+
+        playback = QHBoxLayout()
+        playback.addWidget(self.play_button)
+        playback.addWidget(self.preview_position, stretch=1)
+        playback.addWidget(self.preview_time)
+
+        self.start_slider = self._create_range_slider()
+        self.end_slider = self._create_range_slider()
         self.start_spin = self._create_time_spin()
         self.end_spin = self._create_time_spin()
 
@@ -57,39 +84,33 @@ class TrimDialog(QDialog):
         self.start_spin.valueChanged.connect(self._sync_from_spins)
         self.end_spin.valueChanged.connect(self._sync_from_spins)
 
-        start_row = self._build_row(
-            "Start",
-            self.start_slider,
-            self.start_spin,
-            self._set_start_to_current,
-        )
-        end_row = self._build_row(
-            "End",
-            self.end_slider,
-            self.end_spin,
-            self._set_end_to_current,
-        )
+        self.range_info = QLabel()
+        self.range_info.setObjectName("selectionInfo")
 
-        quick_layout = QHBoxLayout()
-        full_button = QPushButton("전체 길이")
-        full_button.setObjectName("secondaryButton")
-        full_button.clicked.connect(self._reset_full_duration)
-        first_button = QPushButton("Start = 0")
-        first_button.setObjectName("secondaryButton")
-        first_button.clicked.connect(lambda: self.start_slider.setValue(0))
-        last_button = QPushButton("End = 끝")
-        last_button.setObjectName("secondaryButton")
-        last_button.clicked.connect(
-            lambda: self.end_slider.setValue(self._duration_ms)
+        quick = QHBoxLayout()
+        start_current = QPushButton("Start = 현재 위치")
+        end_current = QPushButton("End = 현재 위치")
+        reset = QPushButton("전체 길이")
+        for button in (start_current, end_current, reset):
+            button.setObjectName("secondaryButton")
+        start_current.clicked.connect(
+            lambda: self.start_slider.setValue(self.player.position())
         )
-        quick_layout.addWidget(first_button)
-        quick_layout.addWidget(last_button)
-        quick_layout.addStretch()
-        quick_layout.addWidget(full_button)
+        end_current.clicked.connect(
+            lambda: self.end_slider.setValue(self.player.position())
+        )
+        reset.clicked.connect(self._reset_range)
+        quick.addWidget(start_current)
+        quick.addWidget(end_current)
+        quick.addWidget(reset)
+        quick.addStretch()
 
-        self.selection_info = QLabel()
-        self.selection_info.setObjectName("selectionInfo")
-        self._update_selection_info()
+        start_row = self._build_range_row(
+            "Start", self.start_slider, self.start_spin
+        )
+        end_row = self._build_range_row(
+            "End", self.end_slider, self.end_spin
+        )
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel
@@ -99,14 +120,27 @@ class TrimDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+        description = QLabel(
+            "영상 자체를 재생하거나 seek하면서 남길 시작/끝 지점을 정하세요."
+        )
+        description.setObjectName("dialogDescription")
         layout.addWidget(description)
-        layout.addLayout(quick_layout)
+        layout.addWidget(self.video_widget, stretch=1)
+        layout.addLayout(playback)
+        layout.addWidget(self.range_info)
+        layout.addLayout(quick)
         layout.addWidget(start_row)
         layout.addWidget(end_row)
-        layout.addWidget(self.selection_info)
         layout.addWidget(buttons)
+
+        self.player.positionChanged.connect(self._on_position_changed)
+        self.player.playbackStateChanged.connect(
+            self._on_playback_state_changed
+        )
+        self.player.setPosition(current_position_ms)
+        self._update_range_info()
 
     @property
     def start_ms(self) -> int:
@@ -116,7 +150,15 @@ class TrimDialog(QDialog):
     def end_ms(self) -> int:
         return self.end_slider.value()
 
-    def _create_slider(self) -> QSlider:
+    @staticmethod
+    def _current_media_path(parent: QWidget | None) -> Path | None:
+        if parent is None:
+            return None
+        asset = getattr(parent, "current_asset", None)
+        path = getattr(asset, "path", None)
+        return Path(path) if path is not None else None
+
+    def _create_range_slider(self) -> QSlider:
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, self._duration_ms)
         slider.setSingleStep(100)
@@ -130,69 +172,81 @@ class TrimDialog(QDialog):
         spin.setSuffix(" s")
         return spin
 
-    def _build_row(
+    def _build_range_row(
         self,
-        label_text: str,
+        name: str,
         slider: QSlider,
         spin: QDoubleSpinBox,
-        current_callback,
     ) -> QWidget:
         row = QWidget()
-        row_layout = QVBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(6)
-
-        header = QHBoxLayout()
-        label = QLabel(label_text)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(name)
         label.setObjectName("sectionTitle")
-        current_button = QPushButton("현재 위치 사용")
-        current_button.setObjectName("secondaryButton")
-        current_button.clicked.connect(current_callback)
-
-        header.addWidget(label)
-        header.addStretch()
-        header.addWidget(spin)
-        header.addWidget(current_button)
-
-        row_layout.addLayout(header)
-        row_layout.addWidget(slider)
+        layout.addWidget(label)
+        layout.addWidget(slider, stretch=1)
+        layout.addWidget(spin)
         return row
+
+    def _toggle_playback(self) -> None:
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.player.pause()
+        else:
+            self.player.play()
+
+    def _on_playback_state_changed(
+        self,
+        state: QMediaPlayer.PlaybackState,
+    ) -> None:
+        self.play_button.setText(
+            "Ⅱ Pause"
+            if state == QMediaPlayer.PlaybackState.PlayingState
+            else "▶ Play"
+        )
+
+    def _on_seek_pressed(self) -> None:
+        self._seek_dragging = True
+
+    def _on_position_changed(self, position: int) -> None:
+        if not self._seek_dragging:
+            self.preview_position.setValue(position)
+            self.preview_time.setText(self._format_time(position))
+
+    def _preview_seek_label(self, position: int) -> None:
+        self.preview_time.setText(self._format_time(position))
+
+    def _seek_released(self) -> None:
+        self._seek_dragging = False
+        self.player.setPosition(self.preview_position.value())
 
     def _sync_from_sliders(self) -> None:
         if self._syncing:
             return
-
         self._syncing = True
-        self.start_spin.setValue(self.start_slider.value() / 1000)
-        self.end_spin.setValue(self.end_slider.value() / 1000)
+        self.start_spin.setValue(self.start_ms / 1000)
+        self.end_spin.setValue(self.end_ms / 1000)
         self._syncing = False
-        self._update_selection_info()
+        self._update_range_info()
 
     def _sync_from_spins(self) -> None:
         if self._syncing:
             return
-
         self._syncing = True
         self.start_slider.setValue(round(self.start_spin.value() * 1000))
         self.end_slider.setValue(round(self.end_spin.value() * 1000))
         self._syncing = False
-        self._update_selection_info()
+        self._update_range_info()
 
-    def _set_start_to_current(self) -> None:
-        self.start_slider.setValue(self._current_position_ms)
-
-    def _set_end_to_current(self) -> None:
-        self.end_slider.setValue(self._current_position_ms)
-
-    def _reset_full_duration(self) -> None:
+    def _reset_range(self) -> None:
         self.start_slider.setValue(0)
         self.end_slider.setValue(self._duration_ms)
 
-    def _update_selection_info(self) -> None:
-        selected_ms = max(0, self.end_ms - self.start_ms)
-        self.selection_info.setText(
-            f"선택 길이  {selected_ms / 1000:.3f} s"
-            f"   ·   전체 {self._duration_ms / 1000:.3f} s"
+    def _update_range_info(self) -> None:
+        selected = max(0, self.end_ms - self.start_ms)
+        self.range_info.setText(
+            f"선택 구간  {self._format_time(self.start_ms)} → "
+            f"{self._format_time(self.end_ms)}  ·  "
+            f"길이 {selected / 1000:.3f} s"
         )
 
     def _validate_and_accept(self) -> None:
@@ -203,5 +257,16 @@ class TrimDialog(QDialog):
                 "End는 Start보다 뒤에 있어야 합니다.",
             )
             return
-
+        self.player.stop()
         self.accept()
+
+    def reject(self) -> None:
+        self.player.stop()
+        super().reject()
+
+    @staticmethod
+    def _format_time(milliseconds: int) -> str:
+        total_seconds = max(0, milliseconds) / 1000
+        minutes = int(total_seconds // 60)
+        seconds = total_seconds - minutes * 60
+        return f"{minutes:02d}:{seconds:06.3f}"
