@@ -72,8 +72,24 @@ fi
 
 echo "Standalone executable: ${STANDALONE_BIN}"
 
+FFMPEG_BIN="$(
+  "${VENV}/bin/python" -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())'
+)"
+if [[ ! -f "${FFMPEG_BIN}" ]]; then
+  echo "imageio-ffmpeg의 ffmpeg 실행 파일을 찾지 못했습니다: ${FFMPEG_BIN}" >&2
+  exit 1
+fi
+
 mkdir -p "${APPDIR}/usr/bin"
 install -m 0755 "${STANDALONE_BIN}" "${APPDIR}/usr/bin/MyMediaEditor"
+install -m 0755 "${FFMPEG_BIN}" "${APPDIR}/usr/bin/ffmpeg"
+
+if [[ ! -x "${APPDIR}/usr/bin/ffmpeg" ]]; then
+  echo "AppImage에 ffmpeg가 포함되지 않았습니다." >&2
+  exit 1
+fi
+
+echo "Bundled FFmpeg: ${APPDIR}/usr/bin/ffmpeg"
 
 curl -L --fail --retry 3 \
   "https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_VERSION}/linuxdeploy-x86_64.AppImage" \
