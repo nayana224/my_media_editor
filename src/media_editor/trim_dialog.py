@@ -1,19 +1,20 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
 
 class TrimDialog(QDialog):
-    """영상의 trim 시작/끝 시간을 선택한다."""
+    """슬라이더와 시간 입력으로 영상 trim 구간을 선택한다."""
 
     def __init__(
         self,
@@ -24,30 +25,50 @@ class TrimDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Trim Video")
         self.setModal(True)
-        self.setMinimumWidth(390)
+        self.setMinimumWidth(520)
 
         self._duration_ms = duration_ms
         self._current_position_ms = current_position_ms
-
-        self.start_spin = self._create_time_spin()
-        self.end_spin = self._create_time_spin()
-
-        duration_seconds = duration_ms / 1000
-        self.start_spin.setRange(0.0, duration_seconds)
-        self.end_spin.setRange(0.0, duration_seconds)
-        self.start_spin.setValue(0.0)
-        self.end_spin.setValue(duration_seconds)
+        self._syncing = False
 
         description = QLabel(
-            "남길 영상 구간을 지정하세요. 현재 preview 위치를 바로 사용할 수 있습니다."
+            "남길 구간의 시작과 끝을 슬라이더로 조절하세요. "
+            "현재 preview 위치를 바로 시작/끝으로 지정할 수도 있습니다."
         )
         description.setWordWrap(True)
         description.setObjectName("dialogDescription")
 
-        form = QFormLayout()
-        form.setSpacing(12)
-        form.addRow("Start", self._build_time_row(self.start_spin))
-        form.addRow("End", self._build_time_row(self.end_spin))
+        self.start_slider = self._create_slider()
+        self.end_slider = self._create_slider()
+        self.start_spin = self._create_time_spin()
+        self.end_spin = self._create_time_spin()
+
+        duration_seconds = duration_ms / 1000
+        for spin in (self.start_spin, self.end_spin):
+            spin.setRange(0.0, duration_seconds)
+
+        self.start_slider.setValue(0)
+        self.end_slider.setValue(duration_ms)
+        self.start_spin.setValue(0.0)
+        self.end_spin.setValue(duration_seconds)
+
+        self.start_slider.valueChanged.connect(self._sync_from_sliders)
+        self.end_slider.valueChanged.connect(self._sync_from_sliders)
+        self.start_spin.valueChanged.connect(self._sync_from_spins)
+        self.end_spin.valueChanged.connect(self._sync_from_spins)
+
+        start_row = self._build_row(
+            "Start",
+            self.start_slider,
+            self.start_spin,
+            self._set_start_to_current,
+        )
+        end_row = self._build_row(
+            "End",
+            self.end_slider,
+            self.end_spin,
+            self._set_end_to_current,
+        )
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel
@@ -60,16 +81,24 @@ class TrimDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
         layout.addWidget(description)
-        layout.addLayout(form)
+        layout.addWidget(start_row)
+        layout.addWidget(end_row)
         layout.addWidget(buttons)
 
     @property
     def start_ms(self) -> int:
-        return round(self.start_spin.value() * 1000)
+        return self.start_slider.value()
 
     @property
     def end_ms(self) -> int:
-        return round(self.end_spin.value() * 1000)
+        return self.end_slider.value()
+
+    def _create_slider(self) -> QSlider:
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, self._duration_ms)
+        slider.setSingleStep(100)
+        slider.setPageStep(1000)
+        return slider
 
     def _create_time_spin(self) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -78,21 +107,57 @@ class TrimDialog(QDialog):
         spin.setSuffix(" s")
         return spin
 
-    def _build_time_row(self, spin: QDoubleSpinBox) -> QWidget:
+    def _build_row(
+        self,
+        label_text: str,
+        slider: QSlider,
+        spin: QDoubleSpinBox,
+        current_callback,
+    ) -> QWidget:
         row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        row_layout = QVBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
 
-        use_current = QPushButton("현재 위치")
-        use_current.setObjectName("secondaryButton")
-        use_current.clicked.connect(
-            lambda: spin.setValue(self._current_position_ms / 1000)
-        )
+        header = QHBoxLayout()
+        label = QLabel(label_text)
+        label.setObjectName("sectionTitle")
+        current_button = QPushButton("현재 위치 사용")
+        current_button.setObjectName("secondaryButton")
+        current_button.clicked.connect(current_callback)
 
-        layout.addWidget(spin, stretch=1)
-        layout.addWidget(use_current)
+        header.addWidget(label)
+        header.addStretch()
+        header.addWidget(spin)
+        header.addWidget(current_button)
+
+        row_layout.addLayout(header)
+        row_layout.addWidget(slider)
         return row
+
+    def _sync_from_sliders(self) -> None:
+        if self._syncing:
+            return
+
+        self._syncing = True
+        self.start_spin.setValue(self.start_slider.value() / 1000)
+        self.end_spin.setValue(self.end_slider.value() / 1000)
+        self._syncing = False
+
+    def _sync_from_spins(self) -> None:
+        if self._syncing:
+            return
+
+        self._syncing = True
+        self.start_slider.setValue(round(self.start_spin.value() * 1000))
+        self.end_slider.setValue(round(self.end_spin.value() * 1000))
+        self._syncing = False
+
+    def _set_start_to_current(self) -> None:
+        self.start_slider.setValue(self._current_position_ms)
+
+    def _set_end_to_current(self) -> None:
+        self.end_slider.setValue(self._current_position_ms)
 
     def _validate_and_accept(self) -> None:
         if self.end_ms <= self.start_ms:
@@ -100,14 +165,6 @@ class TrimDialog(QDialog):
                 self,
                 "Trim Video",
                 "End는 Start보다 뒤에 있어야 합니다.",
-            )
-            return
-
-        if self.end_ms > self._duration_ms:
-            QMessageBox.warning(
-                self,
-                "Trim Video",
-                "End가 영상 길이를 초과했습니다.",
             )
             return
 
