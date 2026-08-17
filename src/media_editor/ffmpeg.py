@@ -15,51 +15,59 @@ def find_ffmpeg() -> str:
     return ffmpeg_path
 
 
-def make_upscale_output_path(input_path: Path, kind: MediaKind, scale: int) -> Path:
-    """원본을 덮어쓰지 않는 upscale output 경로를 만든다."""
-    suffix = ".png" if kind is MediaKind.IMAGE else ".mp4"
-    candidate = input_path.with_name(f"{input_path.stem}_upscaled_{scale}x{suffix}")
-    index = 1
+def _make_unique_path(candidate: Path) -> Path:
+    if not candidate.exists():
+        return candidate
 
-    while candidate.exists():
-        candidate = input_path.with_name(
-            f"{input_path.stem}_upscaled_{scale}x_{index}{suffix}"
-        )
+    index = 1
+    while True:
+        indexed = candidate.with_name(f"{candidate.stem}_{index}{candidate.suffix}")
+        if not indexed.exists():
+            return indexed
         index += 1
 
-    return candidate
 
-
-def build_upscale_command(
+def make_upscale_output_path(
     input_path: Path,
-    output_path: Path,
     kind: MediaKind,
     scale: int,
-) -> list[str]:
-    """Lanczos 기반 standard upscale용 ffmpeg 명령을 만든다."""
-    if scale not in (2, 4):
-        raise ValueError("Standard upscale scale은 2 또는 4만 지원합니다.")
+) -> Path:
+    """원본을 덮어쓰지 않는 upscale output 경로를 만든다."""
+    suffix = ".png" if kind is MediaKind.IMAGE else ".mp4"
+    candidate = input_path.with_name(
+        f"{input_path.stem}_upscaled_{scale}x{suffix}"
+    )
+    return _make_unique_path(candidate)
 
-    command = [
-        find_ffmpeg(),
-        "-hide_banner",
-        "-y",
-        "-i",
-        str(input_path),
-        "-vf",
-        f"scale=iw*{scale}:ih*{scale}:flags=lanczos",
+
+def make_trim_output_path(input_path: Path) -> Path:
+    """원본과 같은 폴더에 고유한 trim output 경로를 만든다."""
+    return _make_unique_path(
+        input_path.with_name(f"{input_path.stem}_trimmed.mp4")
+    )
+
+
+def make_mp4_output_path(input_path: Path) -> Path:
+    """WebM 변환 또는 MP4 재출력에 사용할 기본 경로를 만든다."""
+    if input_path.suffix.lower() == ".webm":
+        candidate = input_path.with_suffix(".mp4")
+    else:
+        candidate = input_path.with_name(f"{input_path.stem}_export.mp4")
+    return _make_unique_path(candidate)
+
+
+def _h264_mp4_options(video_filter: str | None = None) -> list[str]:
+    options = [
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
     ]
+    if video_filter is not None:
+        options.extend(["-vf", video_filter])
 
-    if kind is MediaKind.IMAGE:
-        command.extend(["-frames:v", "1", str(output_path)])
-        return command
-
-    command.extend(
+    options.extend(
         [
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
             "-vsync",
             "0",
             "-c:v",
@@ -76,7 +84,89 @@ def build_upscale_command(
             "192k",
             "-movflags",
             "+faststart",
-            str(output_path),
         ]
     )
+    return options
+
+
+def build_upscale_command(
+    input_path: Path,
+    output_path: Path,
+    kind: MediaKind,
+    scale: int,
+) -> list[str]:
+    """Lanczos 기반 standard upscale용 ffmpeg 명령을 만든다."""
+    if scale not in (2, 4):
+        raise ValueError("Standard upscale scale은 2 또는 4만 지원합니다.")
+
+    scale_filter = f"scale=iw*{scale}:ih*{scale}:flags=lanczos"
+    command = [
+        find_ffmpeg(),
+        "-hide_banner",
+        "-y",
+        "-i",
+        str(input_path),
+    ]
+
+    if kind is MediaKind.IMAGE:
+        command.extend(
+            [
+                "-vf",
+                scale_filter,
+                "-frames:v",
+                "1",
+                str(output_path),
+            ]
+        )
+        return command
+
+    video_filter = f"{scale_filter},pad=ceil(iw/2)*2:ceil(ih/2)*2"
+    command.extend(_h264_mp4_options(video_filter))
+    command.append(str(output_path))
+    return command
+
+
+def build_trim_command(
+    input_path: Path,
+    output_path: Path,
+    start_ms: int,
+    end_ms: int,
+) -> list[str]:
+    """지정 구간을 정확히 재인코딩하는 MP4 trim 명령을 만든다."""
+    if start_ms < 0:
+        raise ValueError("Trim 시작 시간은 0 이상이어야 합니다.")
+    if end_ms <= start_ms:
+        raise ValueError("Trim 끝 시간은 시작 시간보다 커야 합니다.")
+
+    duration_ms = end_ms - start_ms
+    command = [
+        find_ffmpeg(),
+        "-hide_banner",
+        "-y",
+        "-i",
+        str(input_path),
+        "-ss",
+        f"{start_ms / 1000:.3f}",
+        "-t",
+        f"{duration_ms / 1000:.3f}",
+    ]
+    command.extend(_h264_mp4_options("pad=ceil(iw/2)*2:ceil(ih/2)*2"))
+    command.append(str(output_path))
+    return command
+
+
+def build_mp4_export_command(
+    input_path: Path,
+    output_path: Path,
+) -> list[str]:
+    """선택한 영상을 호환성 높은 H.264/AAC MP4로 출력한다."""
+    command = [
+        find_ffmpeg(),
+        "-hide_banner",
+        "-y",
+        "-i",
+        str(input_path),
+    ]
+    command.extend(_h264_mp4_options("pad=ceil(iw/2)*2:ceil(ih/2)*2"))
+    command.append(str(output_path))
     return command
