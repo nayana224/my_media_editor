@@ -11,6 +11,7 @@ class EditStateTest(unittest.TestCase):
             rotation=90,
             resize=(1280, 720),
             upscale=2,
+            speed=1.5,
         )
 
         self.assertTrue(state.has_changes)
@@ -22,15 +23,21 @@ class EditStateTest(unittest.TestCase):
                 "Rotate 90°",
                 "Resize 1280x720",
                 "Upscale 2x",
+                "Speed 1.50x",
             ],
         )
 
     def test_clear_removes_all_pending_edits(self) -> None:
-        state = EditState(crop=(0, 0, 100, 100), upscale=2)
+        state = EditState(
+            crop=(0, 0, 100, 100),
+            upscale=2,
+            speed=0.5,
+        )
         state.clear()
 
         self.assertFalse(state.has_changes)
         self.assertEqual(state.labels(), [])
+        self.assertIsNone(state.speed)
 
 
 if __name__ == "__main__":
