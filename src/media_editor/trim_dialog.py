@@ -25,7 +25,7 @@ class TrimDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Trim Video")
         self.setModal(True)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(580)
 
         self._duration_ms = duration_ms
         self._current_position_ms = current_position_ms
@@ -33,7 +33,7 @@ class TrimDialog(QDialog):
 
         description = QLabel(
             "남길 구간의 시작과 끝을 슬라이더로 조절하세요. "
-            "현재 preview 위치를 바로 시작/끝으로 지정할 수도 있습니다."
+            "현재 preview 위치를 시작/끝으로 바로 지정할 수 있습니다."
         )
         description.setWordWrap(True)
         description.setObjectName("dialogDescription")
@@ -70,6 +70,27 @@ class TrimDialog(QDialog):
             self._set_end_to_current,
         )
 
+        quick_layout = QHBoxLayout()
+        full_button = QPushButton("전체 길이")
+        full_button.setObjectName("secondaryButton")
+        full_button.clicked.connect(self._reset_full_duration)
+        first_button = QPushButton("Start = 0")
+        first_button.setObjectName("secondaryButton")
+        first_button.clicked.connect(lambda: self.start_slider.setValue(0))
+        last_button = QPushButton("End = 끝")
+        last_button.setObjectName("secondaryButton")
+        last_button.clicked.connect(
+            lambda: self.end_slider.setValue(self._duration_ms)
+        )
+        quick_layout.addWidget(first_button)
+        quick_layout.addWidget(last_button)
+        quick_layout.addStretch()
+        quick_layout.addWidget(full_button)
+
+        self.selection_info = QLabel()
+        self.selection_info.setObjectName("selectionInfo")
+        self._update_selection_info()
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel
             | QDialogButtonBox.StandardButton.Ok
@@ -81,8 +102,10 @@ class TrimDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
         layout.addWidget(description)
+        layout.addLayout(quick_layout)
         layout.addWidget(start_row)
         layout.addWidget(end_row)
+        layout.addWidget(self.selection_info)
         layout.addWidget(buttons)
 
     @property
@@ -143,6 +166,7 @@ class TrimDialog(QDialog):
         self.start_spin.setValue(self.start_slider.value() / 1000)
         self.end_spin.setValue(self.end_slider.value() / 1000)
         self._syncing = False
+        self._update_selection_info()
 
     def _sync_from_spins(self) -> None:
         if self._syncing:
@@ -152,12 +176,24 @@ class TrimDialog(QDialog):
         self.start_slider.setValue(round(self.start_spin.value() * 1000))
         self.end_slider.setValue(round(self.end_spin.value() * 1000))
         self._syncing = False
+        self._update_selection_info()
 
     def _set_start_to_current(self) -> None:
         self.start_slider.setValue(self._current_position_ms)
 
     def _set_end_to_current(self) -> None:
         self.end_slider.setValue(self._current_position_ms)
+
+    def _reset_full_duration(self) -> None:
+        self.start_slider.setValue(0)
+        self.end_slider.setValue(self._duration_ms)
+
+    def _update_selection_info(self) -> None:
+        selected_ms = max(0, self.end_ms - self.start_ms)
+        self.selection_info.setText(
+            f"선택 길이  {selected_ms / 1000:.3f} s"
+            f"   ·   전체 {self._duration_ms / 1000:.3f} s"
+        )
 
     def _validate_and_accept(self) -> None:
         if self.end_ms <= self.start_ms:
