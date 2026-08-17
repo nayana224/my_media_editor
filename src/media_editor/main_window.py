@@ -20,18 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from media_editor.ffmpeg import (
-    build_crop_command,
-    build_mp4_export_command,
-    build_resize_command,
-    build_rotate_command,
-    build_trim_command,
-    build_upscale_command,
-    make_edit_output_path,
-    make_mp4_output_path,
-    make_trim_output_path,
-    make_upscale_output_path,
-)
+from media_editor.edit_state import EditState
+from media_editor.ffmpeg import build_save_command, make_save_output_path
 from media_editor.media import MediaKind, format_duration
 from media_editor.project import MediaAsset, MediaProject
 from media_editor.transform_dialogs import (
@@ -48,20 +38,23 @@ ASSET_ROLE = Qt.ItemDataRole.UserRole
 
 
 class MainWindow(QMainWindow):
-    """Media library와 GUI 기반 편집 기능을 제공하는 주 창."""
+    """Media library와 비파괴 편집 상태를 제공하는 주 창."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Media Editor")
-        self.resize(1180, 780)
-        self.setMinimumSize(900, 640)
+        self.resize(1180, 800)
+        self.setMinimumSize(900, 660)
 
         self.project = MediaProject()
         self.current_asset: MediaAsset | None = None
+        self._edit_states: dict[Path, EditState] = {}
+
         self._slider_is_pressed = False
         self._ffmpeg_process: QProcess | None = None
         self._ffmpeg_output_path: Path | None = None
         self._ffmpeg_action = ""
+        self._ffmpeg_source_path: Path | None = None
 
         self.audio_output = QAudioOutput(self)
         self.player = QMediaPlayer(self)
@@ -72,6 +65,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_player()
         self._update_playback_controls(False)
+        self._update_edit_status()
         self._update_media_tools()
 
     def _build_ui(self) -> None:
@@ -84,6 +78,11 @@ class MainWindow(QMainWindow):
         remove_action.setShortcut("Delete")
         remove_action.triggered.connect(self._remove_selected_media)
         self.addAction(remove_action)
+
+        save_action = QAction("Save As", self)
+        save_action.setShortcut("Ctrl+Shift+S")
+        save_action.triggered.connect(self._request_save)
+        self.addAction(save_action)
 
         central = QWidget()
         central.setObjectName("root")
@@ -99,7 +98,7 @@ class MainWindow(QMainWindow):
 
         title = QLabel("Media Editor")
         title.setObjectName("appTitle")
-        subtitle = QLabel("이미지와 영상을 하나의 project에서 편집하고 변환합니다")
+        subtitle = QLabel("편집 내용을 누적한 뒤 Save 시 한 번에 렌더링합니다")
         subtitle.setObjectName("appSubtitle")
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
@@ -189,6 +188,16 @@ class MainWindow(QMainWindow):
         timeline_layout.addWidget(self.timeline, stretch=1)
         timeline_layout.addWidget(self.duration_time)
 
+        edit_status_layout = QHBoxLayout()
+        self.edit_status = QLabel("Pending edits: 없음")
+        self.edit_status.setObjectName("selectionInfo")
+        self.reset_edits_button = QPushButton("Reset edits")
+        self.reset_edits_button.setObjectName("secondaryButton")
+        self.reset_edits_button.clicked.connect(self._reset_current_edits)
+
+        edit_status_layout.addWidget(self.edit_status, stretch=1)
+        edit_status_layout.addWidget(self.reset_edits_button)
+
         controls_layout = QHBoxLayout()
         self.play_button = QPushButton("▶  Play")
         self.play_button.setObjectName("primaryButton")
@@ -199,7 +208,7 @@ class MainWindow(QMainWindow):
         self.resize_button = QPushButton("Resize")
         self.rotate_button = QPushButton("Rotate")
         self.upscale_button = QPushButton("Upscale")
-        self.export_button = QPushButton("Export MP4")
+        self.save_button = QPushButton("Save As…")
 
         for button in (
             self.trim_button,
@@ -207,16 +216,16 @@ class MainWindow(QMainWindow):
             self.resize_button,
             self.rotate_button,
             self.upscale_button,
-            self.export_button,
         ):
             button.setObjectName("toolButton")
+        self.save_button.setObjectName("primaryButton")
 
         self.trim_button.clicked.connect(self._request_trim)
         self.crop_button.clicked.connect(self._request_crop)
         self.resize_button.clicked.connect(self._request_resize)
         self.rotate_button.clicked.connect(self._request_rotate)
         self.upscale_button.clicked.connect(self._request_upscale)
-        self.export_button.clicked.connect(self._request_mp4_export)
+        self.save_button.clicked.connect(self._request_save)
 
         controls_layout.addWidget(self.play_button)
         controls_layout.addSpacing(8)
@@ -226,9 +235,10 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.rotate_button)
         controls_layout.addWidget(self.upscale_button)
         controls_layout.addStretch()
-        controls_layout.addWidget(self.export_button)
+        controls_layout.addWidget(self.save_button)
 
         playback_layout.addLayout(timeline_layout)
+        playback_layout.addLayout(edit_status_layout)
         playback_layout.addLayout(controls_layout)
         main_layout.addWidget(playback_card)
 
@@ -300,6 +310,7 @@ class MainWindow(QMainWindow):
 
         self.player.stop()
         self.project.remove(asset)
+        self._edit_states.pop(asset.path.resolve(), None)
         self.media_list.takeItem(row)
 
         if self.media_list.count() == 0:
@@ -310,6 +321,7 @@ class MainWindow(QMainWindow):
                 "파일을 import하거나 preview 영역에 드래그 앤 드롭하세요."
             )
             self._update_playback_controls(False)
+            self._update_edit_status()
             self._update_media_tools()
             return
 
@@ -341,6 +353,7 @@ class MainWindow(QMainWindow):
         self.player.stop()
         self.current_asset = asset
         self.file_info.setText(str(asset.path))
+        self._update_edit_status()
         self._update_media_tools()
 
         if asset.kind is MediaKind.IMAGE:
@@ -357,7 +370,18 @@ class MainWindow(QMainWindow):
         self.player.setSource(QUrl.fromLocalFile(str(asset.path)))
         self._update_playback_controls(True)
 
-    def _current_media_size(self) -> tuple[int, int] | None:
+    def _current_edits(self) -> EditState | None:
+        if self.current_asset is None:
+            return None
+
+        key = self.current_asset.path.resolve()
+        state = self._edit_states.get(key)
+        if state is None:
+            state = EditState()
+            self._edit_states[key] = state
+        return state
+
+    def _source_media_size(self) -> tuple[int, int] | None:
         if self.current_asset is None:
             return None
 
@@ -371,6 +395,60 @@ class MainWindow(QMainWindow):
         if not size.isValid() or size.width() <= 0 or size.height() <= 0:
             return None
         return size.width(), size.height()
+
+    def _size_before_resize(self) -> tuple[int, int] | None:
+        size = self._source_media_size()
+        state = self._current_edits()
+        if size is None or state is None:
+            return size
+
+        width, height = size
+        if state.crop is not None:
+            _, _, width, height = state.crop
+        if state.rotation in (90, 270):
+            width, height = height, width
+        return width, height
+
+    def _current_media_size(self) -> tuple[int, int] | None:
+        """Upscale preview가 사용할 현재 pending 결과 크기를 계산한다."""
+        size = self._size_before_resize()
+        state = self._current_edits()
+        if size is None or state is None:
+            return size
+
+        if state.resize is not None:
+            return state.resize
+        return size
+
+    def _update_edit_status(self) -> None:
+        state = self._current_edits()
+        if state is None or not state.has_changes:
+            self.edit_status.setText("Pending edits: 없음")
+            self.reset_edits_button.setEnabled(False)
+            return
+
+        self.edit_status.setText("Pending edits: " + "  ·  ".join(state.labels()))
+        self.reset_edits_button.setEnabled(self._ffmpeg_process is None)
+
+    def _reset_current_edits(self) -> None:
+        if self._ffmpeg_process is not None:
+            return
+
+        state = self._current_edits()
+        if state is None or not state.has_changes:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Reset edits",
+            "현재 미디어에 설정한 편집 내용을 모두 초기화할까요?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        state.clear()
+        self._update_edit_status()
+        self._update_media_tools()
 
     def _update_playback_controls(self, enabled: bool) -> None:
         self.play_button.setEnabled(enabled)
@@ -394,7 +472,12 @@ class MainWindow(QMainWindow):
         self.rotate_button.setEnabled(has_asset and not busy)
         self.upscale_button.setEnabled(has_asset and not busy)
         self.trim_button.setEnabled(has_video and not busy)
-        self.export_button.setEnabled(has_video and not busy)
+        self.save_button.setEnabled(has_asset and not busy)
+
+        state = self._current_edits()
+        self.reset_edits_button.setEnabled(
+            bool(state and state.has_changes and not busy)
+        )
 
     def _request_trim(self) -> None:
         if (
@@ -413,28 +496,25 @@ class MainWindow(QMainWindow):
 
         self.player.pause()
         dialog = TrimDialog(duration_ms, self.player.position(), self)
+        state = self._current_edits()
+        if state is not None and state.trim is not None:
+            start_ms, end_ms = state.trim
+            dialog.start_slider.setValue(start_ms)
+            dialog.end_slider.setValue(end_ms)
+
         if not dialog.exec():
             return
 
-        output_path = make_trim_output_path(self.current_asset.path)
-        try:
-            command = build_trim_command(
-                self.current_asset.path,
-                output_path,
-                dialog.start_ms,
-                dialog.end_ms,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            self._show_error(str(exc))
-            return
-
-        self._start_ffmpeg_job(command, output_path, "Trim")
+        state = self._current_edits()
+        if state is not None:
+            state.trim = (dialog.start_ms, dialog.end_ms)
+        self._update_edit_status()
 
     def _request_crop(self) -> None:
         if self.current_asset is None or self._ffmpeg_process is not None:
             return
 
-        media_size = self._current_media_size()
+        media_size = self._source_media_size()
         if media_size is None:
             self._show_error(
                 "미디어 해상도를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
@@ -442,36 +522,23 @@ class MainWindow(QMainWindow):
             return
 
         dialog = CropDialog(*media_size, self)
+        state = self._current_edits()
+        if state is not None and state.crop is not None:
+            dialog.crop_preview.set_source_rect(state.crop)
+
         if not dialog.exec():
             return
 
-        x, y, width, height = dialog.crop_rect
-        output_path = make_edit_output_path(
-            self.current_asset.path,
-            self.current_asset.kind,
-            "cropped",
-        )
-        try:
-            command = build_crop_command(
-                self.current_asset.path,
-                output_path,
-                self.current_asset.kind,
-                x,
-                y,
-                width,
-                height,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            self._show_error(str(exc))
-            return
-
-        self._start_ffmpeg_job(command, output_path, "Crop")
+        state = self._current_edits()
+        if state is not None:
+            state.crop = dialog.crop_rect
+        self._update_edit_status()
 
     def _request_resize(self) -> None:
         if self.current_asset is None or self._ffmpeg_process is not None:
             return
 
-        media_size = self._current_media_size()
+        media_size = self._size_before_resize()
         if media_size is None:
             self._show_error(
                 "미디어 해상도를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
@@ -479,124 +546,121 @@ class MainWindow(QMainWindow):
             return
 
         dialog = ResizeDialog(*media_size, self)
+        state = self._current_edits()
+        if state is not None and state.resize is not None:
+            width, height = state.resize
+            dialog.width_spin.setValue(width)
+            dialog.height_spin.setValue(height)
+
         if not dialog.exec():
             return
 
-        width, height = dialog.output_size
-        output_path = make_edit_output_path(
-            self.current_asset.path,
-            self.current_asset.kind,
-            "resized",
-        )
-        try:
-            command = build_resize_command(
-                self.current_asset.path,
-                output_path,
-                self.current_asset.kind,
-                width,
-                height,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            self._show_error(str(exc))
-            return
-
-        self._start_ffmpeg_job(command, output_path, "Resize")
+        state = self._current_edits()
+        if state is not None:
+            state.resize = dialog.output_size
+        self._update_edit_status()
 
     def _request_rotate(self) -> None:
         if self.current_asset is None or self._ffmpeg_process is not None:
             return
 
         dialog = RotateDialog(self)
+        state = self._current_edits()
+        if state is not None and state.rotation is not None:
+            for button in dialog.group.buttons():
+                if int(button.property("degrees")) == state.rotation:
+                    button.setChecked(True)
+                    break
+
         if not dialog.exec():
             return
 
-        output_path = make_edit_output_path(
-            self.current_asset.path,
-            self.current_asset.kind,
-            "rotated",
-        )
-        try:
-            command = build_rotate_command(
-                self.current_asset.path,
-                output_path,
-                self.current_asset.kind,
-                dialog.degrees,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            self._show_error(str(exc))
-            return
-
-        self._start_ffmpeg_job(command, output_path, "Rotate")
+        state = self._current_edits()
+        if state is not None:
+            state.rotation = dialog.degrees
+        self._update_edit_status()
 
     def _request_upscale(self) -> None:
         if self.current_asset is None or self._ffmpeg_process is not None:
             return
 
         dialog = UpscaleDialog(self)
+        state = self._current_edits()
+        if state is not None and state.upscale is not None:
+            for button in dialog.group.buttons():
+                if int(button.property("scale")) == state.upscale:
+                    button.setChecked(True)
+                    break
+
         if not dialog.exec():
             return
 
-        scale = dialog.scale
-        output_path = make_upscale_output_path(
+        state = self._current_edits()
+        if state is not None:
+            state.upscale = dialog.scale
+        self._update_edit_status()
+
+    def _request_save(self) -> None:
+        if self.current_asset is None or self._ffmpeg_process is not None:
+            return
+
+        state = self._current_edits()
+        if state is None:
+            return
+
+        default_path = make_save_output_path(
             self.current_asset.path,
             self.current_asset.kind,
-            scale,
         )
-        try:
-            command = build_upscale_command(
-                self.current_asset.path,
-                output_path,
-                self.current_asset.kind,
-                scale,
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            self._show_error(str(exc))
-            return
 
-        self._start_ffmpeg_job(command, output_path, "Upscale")
+        if self.current_asset.kind is MediaKind.VIDEO:
+            file_filter = "MP4 Video (*.mp4)"
+            suffix = ".mp4"
+        else:
+            file_filter = "PNG Image (*.png)"
+            suffix = ".png"
 
-    def _request_mp4_export(self) -> None:
-        if (
-            self.current_asset is None
-            or self.current_asset.kind is not MediaKind.VIDEO
-            or self._ffmpeg_process is not None
-        ):
-            return
-
-        default_path = make_mp4_output_path(self.current_asset.path)
         filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Export MP4",
+            "Save Edited Media",
             str(default_path),
-            "MP4 Video (*.mp4)",
+            file_filter,
         )
         if not filename:
             return
 
         output_path = Path(filename)
-        if output_path.suffix.lower() != ".mp4":
-            output_path = output_path.with_suffix(".mp4")
+        if output_path.suffix.lower() != suffix:
+            output_path = output_path.with_suffix(suffix)
 
         if output_path.resolve() == self.current_asset.path.resolve():
-            self._show_error("입력 영상과 같은 경로로 export할 수 없습니다.")
+            self._show_error("원본 파일과 같은 경로로 저장할 수 없습니다.")
             return
 
         try:
-            command = build_mp4_export_command(
+            command = build_save_command(
                 self.current_asset.path,
                 output_path,
+                self.current_asset.kind,
+                state,
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             self._show_error(str(exc))
             return
 
-        self._start_ffmpeg_job(command, output_path, "MP4 Export")
+        self._start_ffmpeg_job(
+            command,
+            output_path,
+            "Save",
+            self.current_asset.path,
+        )
 
     def _start_ffmpeg_job(
         self,
         command: list[str],
         output_path: Path,
         action: str,
+        source_path: Path | None = None,
     ) -> None:
         if self._ffmpeg_process is not None:
             return
@@ -608,6 +672,7 @@ class MainWindow(QMainWindow):
         self._ffmpeg_process = process
         self._ffmpeg_output_path = output_path
         self._ffmpeg_action = action
+        self._ffmpeg_source_path = source_path
         self._update_media_tools()
         self.file_info.setText(f"{action} 실행 중... → {output_path}")
         process.start(command[0], command[1:])
@@ -620,25 +685,34 @@ class MainWindow(QMainWindow):
         process = self._ffmpeg_process
         output_path = self._ffmpeg_output_path
         action = self._ffmpeg_action
+        source_path = self._ffmpeg_source_path
 
         self._ffmpeg_process = None
         self._ffmpeg_output_path = None
         self._ffmpeg_action = ""
-        self._update_media_tools()
+        self._ffmpeg_source_path = None
 
         if process is None or output_path is None:
+            self._update_media_tools()
             return
 
         if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
+            self._update_media_tools()
             stderr = bytes(process.readAllStandardError()).decode(
                 errors="replace"
             ).strip()
             self._show_error(f"{action}에 실패했습니다.\n\n{stderr}")
             return
 
+        if source_path is not None:
+            self._edit_states.pop(source_path.resolve(), None)
+
         self._import_paths([output_path])
         self._select_asset_path(output_path)
         self.file_info.setText(f"{action} 완료: {output_path}")
+        self._update_edit_status()
+        self._update_media_tools()
+
         QMessageBox.information(
             self,
             f"{action} 완료",
@@ -653,6 +727,7 @@ class MainWindow(QMainWindow):
         self._ffmpeg_process = None
         self._ffmpeg_output_path = None
         self._ffmpeg_action = ""
+        self._ffmpeg_source_path = None
         self._update_media_tools()
         self._show_error(
             f"{action}을 시작하지 못했습니다. ffmpeg 설치 상태를 확인해 주세요."
