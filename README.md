@@ -28,8 +28,8 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
   - 선택 구간 길이 즉시 표시
 - Crop
   - Image / Video 지원
-  - preview 위에서 새 영역 drag
-  - 영역 내부 drag로 crop rectangle 이동
+  - 초기 전체 프레임 상태에서도 첫 왼쪽 drag로 새 crop 영역 생성
+  - 선택 영역 내부 drag로 crop rectangle 이동
   - 네 모서리 handle로 resize
   - `Ctrl + 마우스 휠`로 crop preview 확대/축소
   - 마우스 위치를 중심으로 zoom
@@ -159,16 +159,17 @@ Trim은 stream copy가 아니라 H.264 / AAC로 재인코딩하여 keyframe 위�
 
 1. 영상 파일을 선택하면 첫 frame이 자동 표시됩니다.
 2. 필요하면 원하는 frame으로 seek한 뒤 `Crop`을 누릅니다.
-3. 실제 frame 위에서 crop rectangle을 직접 그리거나 이동/resize합니다.
-4. 세밀한 조정이 필요하면 crop preview 위에서 `Ctrl + 마우스 휠`을 사용합니다.
+3. 초기에는 전체 frame이 선택되어 있어도, 화면에서 왼쪽 drag를 시작하면 바로 새 crop rectangle이 생성됩니다.
+4. crop rectangle을 만든 뒤에는 영역 내부 drag로 이동하고 네 모서리 handle로 크기를 조절합니다.
+5. 세밀한 조정이 필요하면 crop preview 위에서 `Ctrl + 마우스 휠`을 사용합니다.
    - 위로 scroll: 확대
    - 아래로 scroll: 축소
    - 마우스 포인터 위치를 중심으로 확대/축소
-5. 확대된 화면은 `가운데 휠 버튼`을 누른 채 drag하여 이동합니다.
-6. 선택 영역이 작아졌다면 `선택 영역 맞춤`으로 해당 영역을 화면에 크게 채울 수 있습니다.
-7. `전체 보기`를 누르면 원본 frame 전체 view로 돌아갑니다.
-8. 필요하면 aspect preset 또는 정확한 pixel 값을 사용합니다.
-9. `OK`를 누르면 전체 영상에 같은 crop 좌표가 적용됩니다.
+6. 확대된 화면은 `가운데 휠 버튼`을 누른 채 drag하여 이동합니다.
+7. 선택 영역이 작아졌다면 `선택 영역 맞춤`으로 해당 영역을 화면에 크게 채울 수 있습니다.
+8. `전체 보기`를 누르면 원본 frame 전체 view로 돌아갑니다.
+9. 필요하면 aspect preset 또는 정확한 pixel 값을 사용합니다.
+10. `OK`를 누르면 전체 영상에 같은 crop 좌표가 적용됩니다.
 
 ### Resize
 
