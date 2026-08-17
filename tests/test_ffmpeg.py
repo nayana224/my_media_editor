@@ -3,14 +3,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from media_editor.edit_state import EditState
 from media_editor.ffmpeg import (
     build_crop_command,
     build_mp4_export_command,
     build_resize_command,
     build_rotate_command,
+    build_save_command,
     build_trim_command,
     build_upscale_command,
     make_mp4_output_path,
+    make_save_output_path,
 )
 from media_editor.media import MediaKind
 
@@ -123,6 +126,65 @@ class BuildTrimCommandTest(unittest.TestCase):
                 Path("trimmed.mp4"),
                 5_000,
                 5_000,
+            )
+
+
+class BuildSaveCommandTest(unittest.TestCase):
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_combines_pending_video_edits_in_one_command(
+        self,
+        _mock_find_ffmpeg,
+    ) -> None:
+        edits = EditState(
+            trim=(1_000, 6_500),
+            crop=(10, 20, 640, 480),
+            rotation=90,
+            resize=(1280, 720),
+            upscale=2,
+        )
+        command = build_save_command(
+            Path("input.webm"),
+            Path("output.mp4"),
+            MediaKind.VIDEO,
+            edits,
+        )
+
+        filter_value = command[command.index("-vf") + 1]
+        self.assertEqual(
+            filter_value,
+            "crop=640:480:10:20,transpose=1,"
+            "scale=1280:720:flags=lanczos,"
+            "scale=iw*2:ih*2:flags=lanczos,"
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        )
+        self.assertEqual(command[command.index("-ss") + 1], "1.000")
+        self.assertEqual(command[command.index("-t") + 1], "5.500")
+        self.assertEqual(command[-1], "output.mp4")
+
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_builds_image_save_without_video_codec(
+        self,
+        _mock_find_ffmpeg,
+    ) -> None:
+        command = build_save_command(
+            Path("input.jpg"),
+            Path("output.png"),
+            MediaKind.IMAGE,
+            EditState(crop=(0, 0, 800, 600), resize=(400, 300)),
+        )
+        self.assertIn(
+            "crop=800:600:0:0,scale=400:300:flags=lanczos",
+            command,
+        )
+        self.assertIn("-frames:v", command)
+        self.assertNotIn("libx264", command)
+
+    def test_recommended_save_name_is_editable_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "sample.webm"
+            self.assertEqual(
+                make_save_output_path(input_path, MediaKind.VIDEO),
+                Path(temp_dir) / "sample_edited.mp4",
             )
 
 
