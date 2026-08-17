@@ -35,6 +35,14 @@ QLabel#selectionInfo {
     padding: 8px 10px;
 }
 
+QLabel#editPreview {
+    color: #8f96a3;
+    background: #0c0e12;
+    border: 1px solid #2a2f39;
+    border-radius: 10px;
+    padding: 6px;
+}
+
 QLabel#fileInfo {
     color: #a9b0bd;
     font-size: 12px;
