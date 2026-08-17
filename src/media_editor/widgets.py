@@ -1,7 +1,9 @@
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPixmap
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QImage, QPixmap
+from PySide6.QtMultimedia import QVideoFrame, QVideoSink
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -11,9 +13,83 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from media_editor.edit_state import EditState
+from media_editor.preview_transform import apply_preview_edits
+
+
+class EditedVideoWidget(QLabel):
+    """QVideoSink frame에 pending edit을 적용해 표시한다."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("imagePreview")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumSize(320, 240)
+
+        self._video_sink = QVideoSink(self)
+        self._video_sink.videoFrameChanged.connect(self._on_video_frame_changed)
+        self._edit_provider: Callable[[], EditState | None] | None = None
+        self._source_image = QImage()
+        self._preview_image = QImage()
+
+    def videoSink(self) -> QVideoSink:
+        return self._video_sink
+
+    def set_edit_provider(
+        self,
+        provider: Callable[[], EditState | None],
+    ) -> None:
+        self._edit_provider = provider
+
+    def source_image(self) -> QImage:
+        return self._source_image.copy()
+
+    def preview_image(self) -> QImage:
+        return self._preview_image.copy()
+
+    def refresh_edits(self) -> None:
+        if self._source_image.isNull():
+            return
+
+        edits = self._edit_provider() if self._edit_provider is not None else None
+        self._preview_image = apply_preview_edits(self._source_image, edits)
+        self._update_pixmap()
+
+    def clear_frame(self) -> None:
+        self._source_image = QImage()
+        self._preview_image = QImage()
+        self.clear()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_pixmap()
+
+    def _on_video_frame_changed(self, frame: QVideoFrame) -> None:
+        if not frame.isValid():
+            return
+
+        image = frame.toImage()
+        if image.isNull():
+            return
+
+        self._source_image = image.copy()
+        self.refresh_edits()
+
+    def _update_pixmap(self) -> None:
+        if self._preview_image.isNull():
+            return
+
+        self.setPixmap(
+            QPixmap.fromImage(self._preview_image).scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
 
 class DropPreviewWidget(QFrame):
-    """파일 drop과 이미지 preview를 담당한다."""
+    """파일 drop과 image/video preview를 담당한다."""
 
     files_dropped = Signal(object)
     open_requested = Signal()
@@ -39,7 +115,7 @@ class DropPreviewWidget(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.stack)
 
-        self._image_pixmap: QPixmap | None = None
+        self._image = QImage()
 
     def _create_empty_page(self) -> QWidget:
         page = QWidget()
@@ -55,7 +131,9 @@ class DropPreviewWidget(QFrame):
         title_label.setObjectName("dropTitle")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        description_label = QLabel("여러 PNG · JPG · JPEG · WebM · MP4 파일을 지원합니다")
+        description_label = QLabel(
+            "여러 PNG · JPG · JPEG · WebM · MP4 파일을 지원합니다"
+        )
         description_label.setObjectName("dropDescription")
         description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -68,15 +146,16 @@ class DropPreviewWidget(QFrame):
         layout.addWidget(description_label)
         layout.addSpacing(6)
         layout.addWidget(open_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
         return page
 
     def set_image(self, path: Path) -> None:
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
+        image = QImage(str(path))
+        if image.isNull():
             raise ValueError(f"이미지를 불러올 수 없습니다: {path}")
+        self.set_image_data(image)
 
-        self._image_pixmap = pixmap
+    def set_image_data(self, image: QImage) -> None:
+        self._image = image.copy()
         self.stack.setCurrentWidget(self.image_label)
         self._update_scaled_image()
 
@@ -88,12 +167,12 @@ class DropPreviewWidget(QFrame):
 
         if layout.indexOf(video_widget) < 0:
             layout.addWidget(video_widget)
-            return
 
         self.stack.setCurrentWidget(self.video_page)
 
     def show_empty(self) -> None:
-        self._image_pixmap = None
+        self._image = QImage()
+        self.image_label.clear()
         self.stack.setCurrentWidget(self.empty_page)
 
     def resizeEvent(self, event) -> None:
@@ -101,22 +180,21 @@ class DropPreviewWidget(QFrame):
         self._update_scaled_image()
 
     def _update_scaled_image(self) -> None:
-        if self._image_pixmap is None:
+        if self._image.isNull():
             return
 
-        size = self.image_label.size()
-        scaled = self._image_pixmap.scaled(
-            size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+        self.image_label.setPixmap(
+            QPixmap.fromImage(self._image).scaled(
+                self.image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         )
-        self.image_label.setPixmap(scaled)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             return
-
         event.ignore()
 
     def dropEvent(self, event: QDropEvent) -> None:
