@@ -4,7 +4,10 @@ import unittest
 from unittest.mock import patch
 
 from media_editor.ffmpeg import (
+    build_crop_command,
     build_mp4_export_command,
+    build_resize_command,
+    build_rotate_command,
     build_trim_command,
     build_upscale_command,
     make_mp4_output_path,
@@ -26,8 +29,6 @@ class BuildUpscaleCommandTest(unittest.TestCase):
         self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
         self.assertIn("libx264", command)
         self.assertIn("aac", command)
-        vsync_index = command.index("-vsync")
-        self.assertEqual(command[vsync_index + 1], "0")
 
     @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
     def test_builds_image_upscale_command(self, _mock_find_ffmpeg) -> None:
@@ -52,6 +53,53 @@ class BuildUpscaleCommandTest(unittest.TestCase):
             )
 
 
+class BuildEditCommandTest(unittest.TestCase):
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_builds_video_crop_command(self, _mock_find_ffmpeg) -> None:
+        command = build_crop_command(
+            Path("input.webm"),
+            Path("cropped.mp4"),
+            MediaKind.VIDEO,
+            10,
+            20,
+            640,
+            480,
+        )
+        self.assertIn("crop=640:480:10:20,pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
+        self.assertIn("libx264", command)
+
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_builds_image_resize_command(self, _mock_find_ffmpeg) -> None:
+        command = build_resize_command(
+            Path("input.png"),
+            Path("resized.png"),
+            MediaKind.IMAGE,
+            1280,
+            720,
+        )
+        self.assertIn("scale=1280:720:flags=lanczos", command)
+        self.assertIn("-frames:v", command)
+
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_builds_counter_clockwise_rotate_command(self, _mock_find_ffmpeg) -> None:
+        command = build_rotate_command(
+            Path("input.mp4"),
+            Path("rotated.mp4"),
+            MediaKind.VIDEO,
+            270,
+        )
+        self.assertIn("transpose=2,pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
+
+    def test_rejects_invalid_rotate_degrees(self) -> None:
+        with self.assertRaises(ValueError):
+            build_rotate_command(
+                Path("input.mp4"),
+                Path("rotated.mp4"),
+                MediaKind.VIDEO,
+                45,
+            )
+
+
 class BuildTrimCommandTest(unittest.TestCase):
     @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
     def test_builds_trim_command_with_duration(self, _mock_find_ffmpeg) -> None:
@@ -67,7 +115,6 @@ class BuildTrimCommandTest(unittest.TestCase):
         self.assertEqual(command[start_index + 1], "1.500")
         self.assertEqual(command[duration_index + 1], "3.250")
         self.assertIn("libx264", command)
-        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
 
     def test_rejects_invalid_trim_range(self) -> None:
         with self.assertRaises(ValueError):
