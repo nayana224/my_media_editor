@@ -132,13 +132,27 @@ QPushButton:disabled {
     border-color: #292e37;
 }
 
-QDoubleSpinBox {
+QDoubleSpinBox,
+QSpinBox,
+QComboBox {
     min-height: 34px;
     padding: 0 8px;
     color: #e7eaf0;
     background: #171a20;
     border: 1px solid #343a46;
     border-radius: 7px;
+}
+
+QComboBox QAbstractItemView {
+    color: #e7eaf0;
+    background: #171a20;
+    border: 1px solid #343a46;
+    selection-background-color: #2b355d;
+}
+
+QCheckBox {
+    color: #c3c9d3;
+    spacing: 8px;
 }
 
 QSlider::groove:horizontal {
