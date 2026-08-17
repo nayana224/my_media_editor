@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil
 
+from media_editor.edit_state import EditState
 from media_editor.media import MediaKind
 
 
@@ -66,6 +67,17 @@ def make_mp4_output_path(input_path: Path) -> Path:
     else:
         candidate = input_path.with_name(f"{input_path.stem}_export.mp4")
     return _make_unique_path(candidate)
+
+
+def make_save_output_path(
+    input_path: Path,
+    kind: MediaKind,
+) -> Path:
+    """Save dialog에 제안할 편집 결과 파일명을 만든다."""
+    suffix = ".png" if kind is MediaKind.IMAGE else ".mp4"
+    return _make_unique_path(
+        input_path.with_name(f"{input_path.stem}_edited{suffix}")
+    )
 
 
 def _h264_mp4_options(video_filter: str | None = None) -> list[str]:
@@ -146,12 +158,11 @@ def build_upscale_command(
     if scale not in (2, 4):
         raise ValueError("Standard upscale scale은 2 또는 4만 지원합니다.")
 
-    scale_filter = f"scale=iw*{scale}:ih*{scale}:flags=lanczos"
     return _build_filter_command(
         input_path,
         output_path,
         kind,
-        scale_filter,
+        f"scale=iw*{scale}:ih*{scale}:flags=lanczos",
     )
 
 
@@ -260,5 +271,78 @@ def build_mp4_export_command(
         str(input_path),
     ]
     command.extend(_h264_mp4_options("pad=ceil(iw/2)*2:ceil(ih/2)*2"))
+    command.append(str(output_path))
+    return command
+
+
+def build_save_command(
+    input_path: Path,
+    output_path: Path,
+    kind: MediaKind,
+    edits: EditState,
+) -> list[str]:
+    """누적 편집 상태를 한 번의 FFmpeg 실행으로 저장한다."""
+    filters: list[str] = []
+
+    if edits.crop is not None:
+        x, y, width, height = edits.crop
+        if min(x, y) < 0 or width <= 0 or height <= 0:
+            raise ValueError("Crop 위치와 크기를 확인해 주세요.")
+        filters.append(f"crop={width}:{height}:{x}:{y}")
+
+    if edits.rotation is not None:
+        rotations = {
+            90: "transpose=1",
+            180: "hflip,vflip",
+            270: "transpose=2",
+        }
+        if edits.rotation not in rotations:
+            raise ValueError("Rotate는 90, 180, 270도만 지원합니다.")
+        filters.append(rotations[edits.rotation])
+
+    if edits.resize is not None:
+        width, height = edits.resize
+        if width <= 0 or height <= 0:
+            raise ValueError("Resize 해상도는 1 px 이상이어야 합니다.")
+        filters.append(f"scale={width}:{height}:flags=lanczos")
+
+    if edits.upscale is not None:
+        if edits.upscale not in (2, 4):
+            raise ValueError("Standard upscale scale은 2 또는 4만 지원합니다.")
+        filters.append(
+            f"scale=iw*{edits.upscale}:ih*{edits.upscale}:flags=lanczos"
+        )
+
+    command = [
+        find_ffmpeg(),
+        "-hide_banner",
+        "-y",
+        "-i",
+        str(input_path),
+    ]
+
+    if kind is MediaKind.VIDEO and edits.trim is not None:
+        start_ms, end_ms = edits.trim
+        if start_ms < 0 or end_ms <= start_ms:
+            raise ValueError("Trim 구간을 확인해 주세요.")
+        command.extend(
+            [
+                "-ss",
+                f"{start_ms / 1000:.3f}",
+                "-t",
+                f"{(end_ms - start_ms) / 1000:.3f}",
+            ]
+        )
+
+    if kind is MediaKind.IMAGE:
+        if edits.trim is not None:
+            raise ValueError("이미지에는 Trim을 적용할 수 없습니다.")
+        if filters:
+            command.extend(["-vf", ",".join(filters)])
+        command.extend(["-frames:v", "1", str(output_path)])
+        return command
+
+    filters.append("pad=ceil(iw/2)*2:ceil(ih/2)*2")
+    command.extend(_h264_mp4_options(",".join(filters)))
     command.append(str(output_path))
     return command
