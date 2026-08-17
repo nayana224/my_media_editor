@@ -65,7 +65,7 @@ ffprobe -version
 - `curl`
 - `patchelf`
 
-`pyside6-deploy`가 Linux에서 사용하는 Nuitka standalone build는 system `patchelf` command가 필요합니다. Python package 형태의 `patchelf`만 설치되어 있어서는 충분하지 않습니다.
+`pyside6-deploy`가 Linux에서 사용하는 Nuitka standalone/onefile build는 system `patchelf` command가 필요합니다.
 
 설치:
 
@@ -105,7 +105,9 @@ chmod +x dist/MyMediaEditor-0.1.0-x86_64.AppImage
 
 build script는 별도 `build/package-linux/venv`를 생성하므로 개발용 `.venv`를 수정하지 않습니다.
 
-`pyside6-deploy` 출력 이름은 Qt/PySide 버전에 따라 entry script 이름을 따를 수 있으므로 build script는 `MyMediaEditor.bin` 하나를 하드코딩하지 않고 `deployment/`에서 실제 생성된 executable을 탐색합니다.
+`pyside6-deploy` 출력 위치와 이름은 PySide 버전에 따라 달라질 수 있습니다. 실제 확인된 PySide6 6.11.1 환경에서는 프로젝트 루트에 `MyMediaEditor.bin`이 생성됩니다. build script는 프로젝트 루트의 `MyMediaEditor.bin` / `deploy_main.bin`을 우선 확인하고, 필요한 경우 `deployment/` 경로도 fallback으로 탐색합니다.
+
+Nuitka의 `zstandard` 미설치 경고는 onefile 압축 최적화 관련 경고이고, `ccache` 미설치 경고는 재빌드 속도 최적화 관련 경고입니다. 둘 다 현재 AppImage build의 필수 조건은 아닙니다.
 
 ## Windows local build
 
