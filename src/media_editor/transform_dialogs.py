@@ -77,9 +77,8 @@ class ImagePreviewLabel(QLabel):
             return
 
         self.setText("")
-        pixmap = QPixmap.fromImage(self._image)
         self.setPixmap(
-            pixmap.scaled(
+            QPixmap.fromImage(self._image).scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
@@ -88,7 +87,7 @@ class ImagePreviewLabel(QLabel):
 
 
 class CropSelectionWidget(QWidget):
-    """실제 frame 위에서 crop과 zoom을 직접 조작한다."""
+    """실제 frame 위에서 crop, zoom, pan을 직접 조작한다."""
 
     selection_changed = Signal(object)
     view_changed = Signal(float)
@@ -107,22 +106,21 @@ class CropSelectionWidget(QWidget):
         super().__init__(parent)
         self.setMinimumSize(680, 400)
         self.setMouseTracking(True)
-        self.setCursor(Qt.CursorShape.CrossCursor)
 
         self._preview_pixmap = QPixmap.fromImage(preview_image)
         self._source_width = source_width
         self._source_height = source_height
         self._selection = QRectF(
-            0.0,
-            0.0,
-            float(source_width),
-            float(source_height),
+            0.0, 0.0, float(source_width), float(source_height)
         )
         self._view_rect = QRectF(self._selection)
         self._aspect_ratio: float | None = None
+
         self._drag_mode: str | None = None
         self._press_source = QPointF()
         self._initial_selection = QRectF()
+        self._press_display = QPointF()
+        self._initial_view_rect = QRectF()
 
     @property
     def source_rect(self) -> tuple[int, int, int, int]:
@@ -146,10 +144,7 @@ class CropSelectionWidget(QWidget):
         width = min(max(1, width), self._source_width - x)
         height = min(max(1, height), self._source_height - y)
         self._selection = QRectF(
-            float(x),
-            float(y),
-            float(width),
-            float(height),
+            float(x), float(y), float(width), float(height)
         )
         self.selection_changed.emit(self.source_rect)
         self.update()
@@ -185,27 +180,18 @@ class CropSelectionWidget(QWidget):
 
     def reset_view(self) -> None:
         self._view_rect = QRectF(
-            0.0,
-            0.0,
-            float(self._source_width),
-            float(self._source_height),
+            0.0, 0.0, float(self._source_width), float(self._source_height)
         )
-        self.view_changed.emit(self.zoom_percent)
-        self.update()
+        self._emit_view_changed()
 
     def fit_selection(self) -> None:
         selection = self._selection.normalized()
         margin_x = max(8.0, selection.width() * 0.15)
         margin_y = max(8.0, selection.height() * 0.15)
-        target = selection.adjusted(
-            -margin_x,
-            -margin_y,
-            margin_x,
-            margin_y,
+        self._view_rect = self._clamp_view_rect(
+            selection.adjusted(-margin_x, -margin_y, margin_x, margin_y)
         )
-        self._view_rect = self._clamp_view_rect(target)
-        self.view_changed.emit(self.zoom_percent)
-        self.update()
+        self._emit_view_changed()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         if not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -241,14 +227,17 @@ class CropSelectionWidget(QWidget):
                 self._view_rect.toRect(),
             )
 
-        visible_selection = self._selection.intersected(self._view_rect)
-        if visible_selection.isEmpty():
+        if self._selection.intersected(self._view_rect).isEmpty():
             return
 
         selection_rect = self._source_to_display_rect(self._selection)
-        media_clip = media_rect.intersected(selection_rect)
-        shade = QColor(0, 0, 0, 150)
-        self._paint_shade(painter, media_rect, media_clip, shade)
+        visible_selection = media_rect.intersected(selection_rect)
+        self._paint_shade(
+            painter,
+            media_rect,
+            visible_selection,
+            QColor(0, 0, 0, 150),
+        )
 
         border_pen = QPen(QColor("#7f96ff"))
         border_pen.setWidth(2)
@@ -272,9 +261,18 @@ class CropSelectionWidget(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#ffffff"))
         for handle in self._handle_rects(selection_rect).values():
-            painter.drawRoundedRect(handle, 2.0, 2.0)
+            if self.rect().intersects(handle.toRect()):
+                painter.drawRoundedRect(handle, 2.0, 2.0)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._drag_mode = "pan"
+            self._press_display = event.position()
+            self._initial_view_rect = QRectF(self._view_rect)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+
         if event.button() != Qt.MouseButton.LeftButton:
             return
 
@@ -293,10 +291,13 @@ class CropSelectionWidget(QWidget):
             self._drag_mode = "move"
         else:
             self._drag_mode = "new"
-
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._drag_mode == "pan":
+            self._pan_view(event.position())
+            return
+
         if self._drag_mode is None:
             self._update_cursor(event.position())
             return
@@ -309,8 +310,7 @@ class CropSelectionWidget(QWidget):
             self._move_selection(source_point)
         elif self._drag_mode == "new":
             self._selection = self._rect_from_anchor(
-                self._press_source,
-                source_point,
+                self._press_source, source_point
             )
         else:
             self._resize_from_handle(self._drag_mode, source_point)
@@ -319,11 +319,35 @@ class CropSelectionWidget(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if (
+            event.button() == Qt.MouseButton.MiddleButton
+            and self._drag_mode == "pan"
+        ):
+            self._drag_mode = None
+            self._update_cursor(event.position())
+            event.accept()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_mode = None
             self.selection_changed.emit(self.source_rect)
+            self._update_cursor(event.position())
             self.update()
         event.accept()
+
+    def _pan_view(self, point: QPointF) -> None:
+        media = self._media_rect()
+        if media.width() <= 0 or media.height() <= 0:
+            return
+
+        delta = point - self._press_display
+        source_dx = delta.x() * self._initial_view_rect.width() / media.width()
+        source_dy = delta.y() * self._initial_view_rect.height() / media.height()
+
+        target = QRectF(self._initial_view_rect)
+        target.translate(-source_dx, -source_dy)
+        self._view_rect = self._clamp_view_rect(target)
+        self._emit_view_changed()
 
     def _zoom_at(self, center: QPointF, factor: float) -> None:
         current = self._view_rect
@@ -335,7 +359,6 @@ class CropSelectionWidget(QWidget):
             float(self._source_height),
             max(self.MIN_VIEW_SIZE, current.height() * factor),
         )
-
         rel_x = (
             (center.x() - current.left()) / current.width()
             if current.width() > 0
@@ -346,13 +369,17 @@ class CropSelectionWidget(QWidget):
             if current.height() > 0
             else 0.5
         )
-        target = QRectF(
-            center.x() - rel_x * width,
-            center.y() - rel_y * height,
-            width,
-            height,
+        self._view_rect = self._clamp_view_rect(
+            QRectF(
+                center.x() - rel_x * width,
+                center.y() - rel_y * height,
+                width,
+                height,
+            )
         )
-        self._view_rect = self._clamp_view_rect(target)
+        self._emit_view_changed()
+
+    def _emit_view_changed(self) -> None:
         self.view_changed.emit(self.zoom_percent)
         self.update()
 
@@ -420,12 +447,7 @@ class CropSelectionWidget(QWidget):
         )
 
     def _media_rect(self) -> QRectF:
-        available = QRectF(self.rect()).adjusted(
-            8.0,
-            8.0,
-            -8.0,
-            -8.0,
-        )
+        available = QRectF(self.rect()).adjusted(8.0, 8.0, -8.0, -8.0)
         scale = min(
             available.width() / self._view_rect.width(),
             available.height() / self._view_rect.height(),
@@ -505,11 +527,7 @@ class CropSelectionWidget(QWidget):
             ),
         }
 
-    def _hit_handle(
-        self,
-        point: QPointF,
-        rect: QRectF,
-    ) -> str | None:
+    def _hit_handle(self, point: QPointF, rect: QRectF) -> str | None:
         for name, handle in self._handle_rects(rect).items():
             if handle.contains(point):
                 return name
@@ -530,7 +548,6 @@ class CropSelectionWidget(QWidget):
     def _move_selection(self, point: QPointF) -> None:
         rect = QRectF(self._initial_selection)
         rect.translate(point - self._press_source)
-
         if rect.left() < 0:
             rect.moveLeft(0)
         if rect.top() < 0:
@@ -539,14 +556,9 @@ class CropSelectionWidget(QWidget):
             rect.moveRight(self._source_width)
         if rect.bottom() > self._source_height:
             rect.moveBottom(self._source_height)
-
         self._selection = rect
 
-    def _resize_from_handle(
-        self,
-        handle: str,
-        point: QPointF,
-    ) -> None:
+    def _resize_from_handle(self, handle: str, point: QPointF) -> None:
         rect = self._initial_selection
         anchors = {
             "top_left": rect.bottomRight(),
@@ -554,16 +566,9 @@ class CropSelectionWidget(QWidget):
             "bottom_left": rect.topRight(),
             "bottom_right": rect.topLeft(),
         }
-        self._selection = self._rect_from_anchor(
-            anchors[handle],
-            point,
-        )
+        self._selection = self._rect_from_anchor(anchors[handle], point)
 
-    def _rect_from_anchor(
-        self,
-        anchor: QPointF,
-        point: QPointF,
-    ) -> QRectF:
+    def _rect_from_anchor(self, anchor: QPointF, point: QPointF) -> QRectF:
         dx = point.x() - anchor.x()
         dy = point.y() - anchor.y()
         sx = 1.0 if dx >= 0 else -1.0
@@ -578,14 +583,10 @@ class CropSelectionWidget(QWidget):
                 width = height * self._aspect_ratio
 
         max_width = (
-            self._source_width - anchor.x()
-            if sx > 0
-            else anchor.x()
+            self._source_width - anchor.x() if sx > 0 else anchor.x()
         )
         max_height = (
-            self._source_height - anchor.y()
-            if sy > 0
-            else anchor.y()
+            self._source_height - anchor.y() if sy > 0 else anchor.y()
         )
         factor = min(
             1.0,
@@ -597,15 +598,12 @@ class CropSelectionWidget(QWidget):
 
         return QRectF(
             anchor,
-            QPointF(
-                anchor.x() + width * sx,
-                anchor.y() + height * sy,
-            ),
+            QPointF(anchor.x() + width * sx, anchor.y() + height * sy),
         ).normalized()
 
 
 class CropDialog(QDialog):
-    """실제 frame 위에서 crop 영역과 zoom을 직접 조절한다."""
+    """실제 frame 위에서 crop 영역과 view를 직접 조절한다."""
 
     ASPECTS = [
         ("자유", None),
@@ -632,8 +630,8 @@ class CropDialog(QDialog):
         self._syncing = False
 
         description = QLabel(
-            "실제 frame에서 영역을 드래그하세요. "
-            "Ctrl + 마우스 휠로 확대/축소할 수 있습니다."
+            "영역을 드래그하세요. Ctrl + 휠: 확대/축소 · "
+            "가운데 휠 버튼 드래그: 화면 이동"
         )
         description.setWordWrap(True)
         description.setObjectName("dialogDescription")
@@ -647,16 +645,12 @@ class CropDialog(QDialog):
         self.crop_preview.selection_changed.connect(
             self._sync_fields_from_preview
         )
-        self.crop_preview.view_changed.connect(
-            self._update_zoom_label
-        )
+        self.crop_preview.view_changed.connect(self._update_zoom_label)
 
         self.aspect_combo = QComboBox()
         for label, value in self.ASPECTS:
             self.aspect_combo.addItem(label, value)
-        self.aspect_combo.currentIndexChanged.connect(
-            self._apply_aspect
-        )
+        self.aspect_combo.currentIndexChanged.connect(self._apply_aspect)
 
         fit_button = QPushButton("선택 영역 맞춤")
         fit_button.setObjectName("secondaryButton")
@@ -689,12 +683,10 @@ class CropDialog(QDialog):
 
         self.info = QLabel()
         self.info.setObjectName("selectionInfo")
-
         self.x_spin = self._spin(0, source_width - 1, 0)
         self.y_spin = self._spin(0, source_height - 1, 0)
         self.width_spin = self._spin(1, source_width, source_width)
         self.height_spin = self._spin(1, source_height, source_height)
-
         for spin in (
             self.x_spin,
             self.y_spin,
@@ -726,20 +718,13 @@ class CropDialog(QDialog):
         layout.addLayout(fields)
         layout.addWidget(buttons)
 
-        self._sync_fields_from_preview(
-            self.crop_preview.source_rect
-        )
+        self._sync_fields_from_preview(self.crop_preview.source_rect)
 
     @property
     def crop_rect(self) -> tuple[int, int, int, int]:
         return self.crop_preview.source_rect
 
-    def _spin(
-        self,
-        minimum: int,
-        maximum: int,
-        value: int,
-    ) -> QSpinBox:
+    def _spin(self, minimum: int, maximum: int, value: int) -> QSpinBox:
         spin = QSpinBox()
         spin.setRange(minimum, maximum)
         spin.setValue(value)
@@ -749,7 +734,6 @@ class CropDialog(QDialog):
     def _sync_fields_from_preview(self, rect) -> None:
         if self._syncing:
             return
-
         x, y, width, height = rect
         self._syncing = True
         self.x_spin.setValue(x)
@@ -758,11 +742,8 @@ class CropDialog(QDialog):
         self.height_spin.setValue(height)
         self._syncing = False
 
-        area = (
-            width
-            * height
-            * 100
-            / (self._source_width * self._source_height)
+        area = width * height * 100 / (
+            self._source_width * self._source_height
         )
         self.info.setText(
             f"선택 영역 {width} × {height} px · "
@@ -772,7 +753,6 @@ class CropDialog(QDialog):
     def _sync_preview_from_fields(self) -> None:
         if self._syncing:
             return
-
         self.crop_preview.set_source_rect(
             (
                 self.x_spin.value(),
@@ -861,13 +841,10 @@ class ResizeDialog(QDialog):
         self.height_spin = self._size_spin(source_height)
         self.keep_ratio = QCheckBox("가로세로 비율 유지")
         self.keep_ratio.setChecked(True)
-
         self.result_label = QLabel()
         self.result_label.setObjectName("selectionInfo")
 
-        self.preset_combo.currentIndexChanged.connect(
-            self._apply_preset
-        )
+        self.preset_combo.currentIndexChanged.connect(self._apply_preset)
         self.keep_ratio.toggled.connect(self._apply_preset)
         self.width_spin.valueChanged.connect(self._width_changed)
         self.height_spin.valueChanged.connect(self._height_changed)
@@ -886,14 +863,11 @@ class ResizeDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("현재 frame을 보면서 출력 크기를 조절하세요.")
-        )
+        layout.addWidget(QLabel("현재 frame을 보면서 출력 크기를 조절하세요."))
         layout.addWidget(self.preview, stretch=1)
         layout.addWidget(self.result_label)
         layout.addLayout(form)
         layout.addWidget(buttons)
-
         self._refresh_preview()
 
     @property
@@ -910,7 +884,6 @@ class ResizeDialog(QDialog):
     def _apply_preset(self) -> None:
         index = self.preset_combo.currentIndex()
         _, size = self.PRESETS[index]
-
         if index == 0:
             size = (self._source_width, self._source_height)
         if size is None:
@@ -938,11 +911,7 @@ class ResizeDialog(QDialog):
             self.height_spin.setValue(
                 max(
                     1,
-                    round(
-                        width
-                        * self._source_height
-                        / self._source_width
-                    ),
+                    round(width * self._source_height / self._source_width),
                 )
             )
             self._syncing = False
@@ -954,11 +923,7 @@ class ResizeDialog(QDialog):
             self.width_spin.setValue(
                 max(
                     1,
-                    round(
-                        height
-                        * self._source_width
-                        / self._source_height
-                    ),
+                    round(height * self._source_width / self._source_height),
                 )
             )
             self._syncing = False
@@ -975,7 +940,6 @@ class ResizeDialog(QDialog):
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
-
         percent = width * 100 / self._source_width
         self.result_label.setText(
             f"출력 {width} × {height} px · "
@@ -992,10 +956,7 @@ class RotateDialog(QDialog):
         ("↺ 90°", 270),
     ]
 
-    def __init__(
-        self,
-        parent: QWidget | None = None,
-    ) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Rotate")
         self.setModal(True)
@@ -1027,7 +988,6 @@ class RotateDialog(QDialog):
         layout.addWidget(self.preview, stretch=1)
         layout.addLayout(choices)
         layout.addWidget(buttons)
-
         self._refresh_preview()
 
     @property
@@ -1053,10 +1013,7 @@ class RotateDialog(QDialog):
 class UpscaleDialog(QDialog):
     """현재 frame과 예상 출력 해상도를 함께 보여준다."""
 
-    def __init__(
-        self,
-        parent: QWidget | None = None,
-    ) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Upscale")
         self.setModal(True)
@@ -1110,19 +1067,15 @@ class UpscaleDialog(QDialog):
         layout.addLayout(options)
         layout.addWidget(self.info)
         layout.addWidget(buttons)
-
         self._update_info()
 
     @property
     def scale(self) -> int:
-        return int(
-            self.group.checkedButton().property("scale")
-        )
+        return int(self.group.checkedButton().property("scale"))
 
     def _update_info(self) -> None:
         if self.group.checkedButton() is None:
             return
-
         scale = self.scale
         self.info.setText(
             f"예상 출력 {self._source_width * scale} × "
