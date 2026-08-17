@@ -13,6 +13,8 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
   - Remove는 disk의 원본 file을 삭제하지 않음
 - PNG / JPG / JPEG preview
 - WebM / MP4 preview
+  - 영상 선택 직후 첫 frame을 자동 decode하여 표시
+  - 첫 frame 준비 중에는 audio를 mute하고 frame 확보 후 자동 pause
 - Video Play / Pause / Seek
 - Preview-first 편집 dialog
   - Trim: dialog 안에서 실제 영상을 재생/seek하면서 Start / End 지정
@@ -29,6 +31,9 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
   - preview 위에서 새 영역 drag
   - 영역 내부 drag로 이동
   - 네 모서리 handle로 resize
+  - `Ctrl + 마우스 휠`로 crop preview 확대/축소
+  - 마우스 위치를 중심으로 zoom
+  - `선택 영역 맞춤`, `전체 보기` 제공
   - 자유 / 원본 비율 / 16:9 / 4:3 / 1:1 preset
   - `가운데 80%`, `전체 프레임`
   - X / Y / Width / Height 직접 수정 가능
@@ -54,6 +59,10 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
 
 ## Preview 동작
 
+영상 파일을 선택하면 사용자가 `Play`를 누르지 않아도 첫 유효 video frame을 자동으로
+준비합니다. 내부적으로 첫 frame이 decode될 때까지만 소리 없이 재생하고, frame이 도착하면
+즉시 pause하고 위치를 0으로 되돌립니다.
+
 영상 편집 dialog는 Qt Multimedia의 `QVideoSink`에서 현재 video frame을 가져와
 `QImage` preview로 사용합니다. 따라서 Crop / Resize / Rotate / Upscale에서 현재 보고 있던
 영상 frame을 기준으로 편집 결과를 확인할 수 있습니다.
@@ -65,9 +74,6 @@ Start 또는 End로 바로 지정할 수 있습니다.
 Video Crop은 현재 preview frame에서 pixel 영역을 선택하고, 해당 X / Y / Width / Height를
 전체 영상에 동일하게 적용합니다.
 
-영상이 아직 decode되지 않아 현재 frame을 얻지 못한 경우에는 preview 안내 문구를
-표시합니다. 이 경우 영상을 잠깐 재생하거나 seek한 뒤 dialog를 다시 열면 됩니다.
-
 ## Architecture
 
 ```text
@@ -78,12 +84,13 @@ PySide6 GUI
     |
     +-- Qt Multimedia
     |       |-- Main Preview / Seek
+    |       |-- first-frame auto prime
     |       |-- QVideoSink current frame
     |       +-- Trim dialog playback
     |
     +-- Edit Dialogs
     |       |-- Trim
-    |       |-- Interactive Crop
+    |       |-- Interactive Crop + Zoom
     |       |-- Resize live preview
     |       |-- Rotate live preview
     |       +-- Upscale preview
@@ -142,11 +149,17 @@ Trim은 stream copy가 아니라 H.264 / AAC로 재인코딩하여 keyframe 위�
 
 ### Crop
 
-1. 영상에서 crop 판단에 적합한 frame으로 seek합니다.
-2. `Crop`을 누릅니다.
+1. 영상 파일을 선택하면 첫 frame이 자동 표시됩니다.
+2. 필요하면 원하는 frame으로 seek한 뒤 `Crop`을 누릅니다.
 3. 실제 frame 위에서 crop rectangle을 직접 그리거나 이동/resize합니다.
-4. 필요하면 aspect preset 또는 정확한 pixel 값을 사용합니다.
-5. `OK`를 누르면 전체 영상에 같은 crop 좌표가 적용됩니다.
+4. 세밀한 조정이 필요하면 crop preview 위에서 `Ctrl + 마우스 휠`을 사용합니다.
+   - 위로 scroll: 확대
+   - 아래로 scroll: 축소
+   - 마우스 포인터 위치를 중심으로 확대/축소
+5. 선택 영역이 작아졌다면 `선택 영역 맞춤`으로 해당 영역을 화면에 크게 채울 수 있습니다.
+6. `전체 보기`를 누르면 원본 frame 전체 view로 돌아갑니다.
+7. 필요하면 aspect preset 또는 정확한 pixel 값을 사용합니다.
+8. `OK`를 누르면 전체 영상에 같은 crop 좌표가 적용됩니다.
 
 ### Resize
 
