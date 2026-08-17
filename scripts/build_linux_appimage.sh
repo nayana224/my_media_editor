@@ -96,8 +96,17 @@ if [[ -z "${GENERATED}" ]]; then
 fi
 
 VERSION="$(
-  "${VENV}/bin/python" -c \
-    'import tomllib; print(tomllib.load(open("../pyproject.toml", "rb"))["project"]["version"])'
+  PROJECT_ROOT="${PROJECT_ROOT}" "${VENV}/bin/python" -c '
+import os
+from pathlib import Path
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+project = Path(os.environ["PROJECT_ROOT"]) / "pyproject.toml"
+with project.open("rb") as stream:
+    print(tomllib.load(stream)["project"]["version"])
+'
 )"
 OUTPUT="MyMediaEditor-${VERSION}-x86_64.AppImage"
 mv "${GENERATED}" "${OUTPUT}"
