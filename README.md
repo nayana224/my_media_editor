@@ -29,10 +29,11 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
 - Crop
   - Image / Video 지원
   - preview 위에서 새 영역 drag
-  - 영역 내부 drag로 이동
+  - 영역 내부 drag로 crop rectangle 이동
   - 네 모서리 handle로 resize
   - `Ctrl + 마우스 휠`로 crop preview 확대/축소
   - 마우스 위치를 중심으로 zoom
+  - `가운데 휠 버튼 drag`로 확대된 view 이동
   - `선택 영역 맞춤`, `전체 보기` 제공
   - 자유 / 원본 비율 / 16:9 / 4:3 / 1:1 preset
   - `가운데 80%`, `전체 프레임`
@@ -56,6 +57,10 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
   - 홀수 해상도 입력은 최대 1 px padding
 - FFmpeg 작업은 `QProcess`로 실행하여 GUI thread를 block하지 않음
 - 편집 결과를 Media Library에 자동 추가하고 결과 file을 자동 선택
+- Terminal 종료 처리
+  - `Ctrl+C` (`SIGINT`)와 `SIGTERM`을 처리
+  - video playback을 중지하고 active FFmpeg process에 `terminate()` 요청
+  - 제한 시간 안에 끝나지 않으면 `kill()` 후 application 종료
 
 ## Preview 동작
 
@@ -90,7 +95,7 @@ PySide6 GUI
     |
     +-- Edit Dialogs
     |       |-- Trim
-    |       |-- Interactive Crop + Zoom
+    |       |-- Interactive Crop + Zoom + Pan
     |       |-- Resize live preview
     |       |-- Rotate live preview
     |       +-- Upscale preview
@@ -125,6 +130,9 @@ cd ~/inpyo_ws/my_media_editor
 ./scripts/run.sh
 ```
 
+Terminal에서 실행한 경우 `Ctrl+C`로 종료할 수 있습니다. 종료 시 재생을 중지하고 active
+FFmpeg child process를 우선 정상 종료한 뒤 필요할 경우 강제 종료합니다.
+
 ## Check
 
 ```bash
@@ -156,10 +164,11 @@ Trim은 stream copy가 아니라 H.264 / AAC로 재인코딩하여 keyframe 위�
    - 위로 scroll: 확대
    - 아래로 scroll: 축소
    - 마우스 포인터 위치를 중심으로 확대/축소
-5. 선택 영역이 작아졌다면 `선택 영역 맞춤`으로 해당 영역을 화면에 크게 채울 수 있습니다.
-6. `전체 보기`를 누르면 원본 frame 전체 view로 돌아갑니다.
-7. 필요하면 aspect preset 또는 정확한 pixel 값을 사용합니다.
-8. `OK`를 누르면 전체 영상에 같은 crop 좌표가 적용됩니다.
+5. 확대된 화면은 `가운데 휠 버튼`을 누른 채 drag하여 이동합니다.
+6. 선택 영역이 작아졌다면 `선택 영역 맞춤`으로 해당 영역을 화면에 크게 채울 수 있습니다.
+7. `전체 보기`를 누르면 원본 frame 전체 view로 돌아갑니다.
+8. 필요하면 aspect preset 또는 정확한 pixel 값을 사용합니다.
+9. `OK`를 누르면 전체 영상에 같은 crop 좌표가 적용됩니다.
 
 ### Resize
 
@@ -174,6 +183,25 @@ Trim은 stream copy가 아니라 H.264 / AAC로 재인코딩하여 keyframe 위�
 
 현재 frame과 예상 출력 해상도를 확인하면서 Standard 2x 또는 4x를 선택합니다. 현재
 Standard Upscale은 Lanczos 기반이며 AI 복원은 아닙니다.
+
+## 다른 편집기에서 참고할 UX 방향
+
+기능을 그대로 복제하기보다 작은 데스크톱 편집기에 맞는 상호작용만 선별해서 적용합니다.
+
+- Kdenlive 계열 UX
+  - frame 단위 좌/우 이동
+  - clip 경계, playhead, marker에 snap
+  - timeline `Fit Zoom`
+  - 4K 이상 source용 proxy workflow
+  - configurable shortcut
+- DaVinci Resolve Cut 계열 UX
+  - 전체 sequence와 현재 작업 구간을 동시에 보는 dual timeline 개념
+  - 현재 media를 빠르게 훑는 source-tape 성격의 browsing
+  - 선택 clip을 sequence 끝에 즉시 추가하는 `Append at End`
+  - trim 시 작업 지점을 크게 보여주는 집중형 editing view
+
+현재 Crop의 `전체 보기` + 확대 view, `Ctrl + Wheel` zoom, 가운데 버튼 pan도 이와 같은
+"전체 맥락을 유지하면서 필요한 곳만 정밀하게 편집"하는 방향으로 유지합니다.
 
 ## 지원 형식
 
@@ -203,10 +231,20 @@ FFmpeg executable bundle은 라이선스와 배포 조건을 확인한 뒤 packa
 
 ## Roadmap
 
-1. 여러 video를 시간 순서로 붙이는 Sequence / Concat
-2. Side-by-side / Top-bottom / 2x2 Grid layout compose
-3. Export progress / cancel
-4. AI Upscale
-5. Windows / Ubuntu packaging 및 GitHub Release 자동화
+1. Sequence / Concat
+   - Media Library에서 여러 video 선택
+   - drag로 순서 변경
+   - `Append at End`
+   - clip 경계 snap
+2. Timeline usability
+   - 좌/우 화살표 frame step
+   - marker
+   - Fit Zoom
+   - 전체 sequence + 작업 구간을 함께 보는 compact dual-view
+3. Side-by-side / Top-bottom / 2x2 Grid layout compose
+4. Export progress / cancel
+5. 고해상도 source용 proxy preview
+6. AI Upscale
+7. Windows / Ubuntu packaging 및 GitHub Release 자동화
 
 기능 추가 시 README의 현재 구현 범위, 사용법, architecture와 roadmap도 함께 갱신합니다.
