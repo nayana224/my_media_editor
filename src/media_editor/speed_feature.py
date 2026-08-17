@@ -31,9 +31,7 @@ class SpeedController(QObject):
     def refresh(self) -> None:
         asset = self.window.current_asset
         is_video = isinstance(asset, MediaAsset) and asset.kind is MediaKind.VIDEO
-        self.button.setEnabled(
-            is_video and self.window._ffmpeg_process is None
-        )
+        self.button.setEnabled(is_video and self.window._ffmpeg_process is None)
 
         if not is_video:
             self.button.setText("Speed")
@@ -45,25 +43,23 @@ class SpeedController(QObject):
             "Speed" if abs(rate - 1.0) < 1e-9 else f"Speed {rate:.2f}×"
         )
 
-    def _selection_changed(self, current, previous) -> None:
-        del current, previous
+    def apply_current_rate(self) -> None:
         asset = self.window.current_asset
         if asset is None or asset.kind is not MediaKind.VIDEO:
             self.window.player.setPlaybackRate(1.0)
-            self.refresh()
             return
 
         state = self.window._current_edits()
         rate = 1.0 if state is None or state.speed is None else state.speed
         self.window.player.setPlaybackRate(rate)
+
+    def _selection_changed(self, current, previous) -> None:
+        del current, previous
+        self.apply_current_rate()
         self.refresh()
 
     def _reset_clicked(self) -> None:
-        asset = self.window.current_asset
-        if asset is not None and asset.kind is MediaKind.VIDEO:
-            state = self.window._current_edits()
-            rate = 1.0 if state is None or state.speed is None else state.speed
-            self.window.player.setPlaybackRate(rate)
+        self.apply_current_rate()
         self.refresh()
 
     def _rate_changed(self, rate: float) -> None:
@@ -88,8 +84,17 @@ class SpeedController(QObject):
         if state.trim is not None:
             source_duration_ms = state.trim[1] - state.trim[0]
 
-        dialog = SpeedDialog(previous_rate, source_duration_ms, self.window)
-        dialog.rate_changed.connect(self.window.player.setPlaybackRate)
+        previous_position = self.window.player.position()
+        self.window.player.pause()
+
+        dialog = SpeedDialog(
+            asset.path,
+            previous_rate,
+            source_duration_ms,
+            previous_position,
+            state,
+            self.window,
+        )
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             self.window.player.setPlaybackRate(previous_rate)
@@ -99,7 +104,10 @@ class SpeedController(QObject):
         rate = dialog.rate
         state.speed = None if abs(rate - 1.0) < 1e-9 else rate
         self.window.player.setPlaybackRate(rate)
+        self.window.player.setPosition(previous_position)
         self.window._update_edit_status()
+        if hasattr(self.window, "_refresh_pending_preview"):
+            self.window._refresh_pending_preview()
         self.window._update_media_tools()
         self.refresh()
 
