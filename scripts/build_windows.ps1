@@ -5,10 +5,13 @@ $BuildRoot = Join-Path $ProjectRoot "build\package-windows"
 $DistRoot = Join-Path $ProjectRoot "dist"
 $Venv = Join-Path $BuildRoot "venv"
 $Python = Join-Path $Venv "Scripts\python.exe"
-$Deploy = Join-Path $Venv "Scripts\pyside6-deploy.exe"
+$DeploymentRoot = Join-Path $ProjectRoot "deployment"
 
 if (Test-Path $BuildRoot) {
     Remove-Item $BuildRoot -Recurse -Force
+}
+if (Test-Path $DeploymentRoot) {
+    Remove-Item $DeploymentRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path $BuildRoot | Out-Null
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
@@ -16,29 +19,28 @@ New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 python -m venv $Venv
 & $Python -m pip install --upgrade pip
 & $Python -m pip install -e $ProjectRoot
+& $Python -m pip install "Nuitka[onefile]"
 
-Push-Location $ProjectRoot
-try {
-    & $Deploy `
-        (Join-Path $ProjectRoot "deploy_main.py") `
-        --name MyMediaEditor `
-        --extra-modules Multimedia,MultimediaWidgets `
-        --force
-}
-finally {
-    Pop-Location
-}
+& $Python -m nuitka `
+    (Join-Path $ProjectRoot "deploy_main.py") `
+    --follow-imports `
+    --enable-plugin=pyside6 `
+    --output-dir=$DeploymentRoot `
+    --output-filename=MyMediaEditor.exe `
+    --onefile `
+    --assume-yes-for-downloads `
+    --noinclude-qt-translations `
+    --include-qt-plugins=multimedia,networkinformation,platforminputcontexts
 
 $Exe = Get-ChildItem `
-    -Path $ProjectRoot `
+    -Path $DeploymentRoot `
     -Filter "MyMediaEditor.exe" `
     -File `
     -Recurse | `
-    Where-Object { $_.FullName -notlike "$BuildRoot*" } | `
     Select-Object -First 1
 
 if ($null -eq $Exe) {
-    throw "pyside6-deploy 결과 MyMediaEditor.exe를 찾지 못했습니다."
+    throw "Nuitka 결과 MyMediaEditor.exe를 찾지 못했습니다."
 }
 
 $Version = & $Python -c `
