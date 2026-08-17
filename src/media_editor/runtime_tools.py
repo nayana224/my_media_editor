@@ -4,6 +4,23 @@ import shutil
 import sys
 
 
+def configure_runtime_path() -> None:
+    """배포 bundle의 tool 디렉터리를 PATH 앞쪽에 추가한다."""
+    current_path = os.environ.get("PATH", "")
+    entries = [
+        str(directory)
+        for directory in _runtime_tool_directories()
+        if directory.is_dir()
+    ]
+    if not entries:
+        return
+
+    prefix = os.pathsep.join(entries)
+    os.environ["PATH"] = (
+        f"{prefix}{os.pathsep}{current_path}" if current_path else prefix
+    )
+
+
 def find_runtime_tool(name: str) -> str:
     """배포 bundle과 PATH에서 외부 실행 파일을 찾는다."""
     executable_name = f"{name}.exe" if sys.platform == "win32" else name
