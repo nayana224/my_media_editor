@@ -14,6 +14,7 @@ from media_editor.sequence_export import (
     build_sequence_command,
     make_sequence_output_path,
 )
+from media_editor.speed_feature import install_speed_feature
 from media_editor.style import APP_STYLE
 from media_editor.widgets import EditedVideoWidget
 
@@ -41,6 +42,7 @@ class PreviewReadyMainWindow(MainWindow):
         )
 
         self._install_sequence_button()
+        self._speed_controller = install_speed_feature(self)
         self._refresh_pending_preview()
         self._update_media_tools()
 
@@ -59,6 +61,8 @@ class PreviewReadyMainWindow(MainWindow):
 
     def _update_media_tools(self) -> None:
         super()._update_media_tools()
+        if hasattr(self, "_speed_controller"):
+            self._speed_controller.refresh()
         if not hasattr(self, "sequence_button"):
             return
 
