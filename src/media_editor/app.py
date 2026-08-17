@@ -17,11 +17,15 @@ from media_editor.sequence_export import (
 )
 from media_editor.speed_feature import install_speed_feature
 from media_editor.style import APP_STYLE
+from media_editor.timeline_model import (
+    build_timeline_mapping,
+    format_timeline_time,
+)
 from media_editor.widgets import EditedVideoWidget
 
 
 class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
-    """첫 frame, 누적 편집 live preview와 Sequence를 제공한다."""
+    """누적 live preview, 편집 결과 timeline과 Sequence를 제공한다."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -45,6 +49,7 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         self._install_sequence_button()
         self._speed_controller = install_speed_feature(self)
         self._refresh_pending_preview()
+        self._refresh_timeline()
         self._update_media_tools()
 
     def _install_sequence_button(self) -> None:
@@ -123,6 +128,8 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
             self._speed_controller.apply_current_rate()
             self._speed_controller.refresh()
 
+        self._refresh_timeline()
+
     def _source_media_size(self) -> tuple[int, int] | None:
         if self.current_asset is None:
             return None
@@ -169,13 +176,118 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         super()._update_edit_status()
         if hasattr(self, "preview"):
             self._refresh_pending_preview()
+        if hasattr(self, "timeline"):
+            self._refresh_timeline()
 
     def _reset_current_edits(self) -> None:
         super()._reset_current_edits()
         self.player.setPlaybackRate(1.0)
         self._refresh_pending_preview()
+        self._refresh_timeline()
         if hasattr(self, "_speed_controller"):
             self._speed_controller.refresh()
+
+    def _timeline_mapping(self):
+        return build_timeline_mapping(
+            self.player.duration(),
+            self._current_edits(),
+        )
+
+    def _refresh_timeline(self) -> None:
+        """Trim/Speed를 반영한 편집 결과 기준 timeline으로 갱신한다."""
+        if (
+            self.current_asset is None
+            or self.current_asset.kind is not MediaKind.VIDEO
+            or self.player.duration() <= 0
+        ):
+            self.timeline.setRange(0, 0)
+            self.timeline.setValue(0)
+            self.current_time.setText("00:00.000")
+            self.duration_time.setText("00:00.000")
+            self.timeline.setToolTip("")
+            return
+
+        mapping = self._timeline_mapping()
+        self.timeline.setRange(0, mapping.output_duration_ms)
+
+        source_position = self.player.position()
+        if (
+            not self._preview_priming
+            and (
+                source_position < mapping.source_start_ms
+                or source_position > mapping.source_end_ms
+            )
+        ):
+            source_position = mapping.source_start_ms
+            self.player.setPosition(source_position)
+
+        output_position = mapping.source_to_output_ms(source_position)
+        if not self._slider_is_pressed:
+            self.timeline.setValue(output_position)
+
+        self.current_time.setText(format_timeline_time(output_position))
+        self.duration_time.setText(
+            format_timeline_time(mapping.output_duration_ms)
+        )
+        self.timeline.setToolTip(
+            "편집 결과 timeline · "
+            f"source {format_timeline_time(mapping.source_start_ms)} → "
+            f"{format_timeline_time(mapping.source_end_ms)} · "
+            f"Speed {mapping.speed:.2f}×"
+        )
+
+    def _on_duration_changed(self, duration: int) -> None:
+        del duration
+        self._refresh_timeline()
+
+    def _on_position_changed(self, position: int) -> None:
+        if (
+            self.current_asset is None
+            or self.current_asset.kind is not MediaKind.VIDEO
+            or self.player.duration() <= 0
+        ):
+            return
+
+        mapping = self._timeline_mapping()
+        output_position = mapping.source_to_output_ms(position)
+
+        if not self._slider_is_pressed:
+            self.timeline.setValue(output_position)
+        self.current_time.setText(format_timeline_time(output_position))
+
+        if self._preview_priming:
+            return
+
+        if (
+            self.player.playbackState()
+            == QMediaPlayer.PlaybackState.PlayingState
+            and position >= mapping.source_end_ms
+        ):
+            self.player.pause()
+            self.player.setPosition(mapping.source_start_ms)
+
+    def _on_slider_pressed(self) -> None:
+        self._slider_is_pressed = True
+
+    def _on_slider_released(self) -> None:
+        self._slider_is_pressed = False
+        if (
+            self.current_asset is None
+            or self.current_asset.kind is not MediaKind.VIDEO
+        ):
+            return
+
+        mapping = self._timeline_mapping()
+        source_position = mapping.output_to_source_ms(
+            self.timeline.value()
+        )
+        self.player.setPosition(source_position)
+        self.current_time.setText(
+            format_timeline_time(self.timeline.value())
+        )
+
+    def _on_slider_moved(self, position: int) -> None:
+        self.current_time.setText(format_timeline_time(position))
 
     def _prime_video_preview(self) -> None:
         """소리 없이 첫 유효 frame을 decode한 뒤 즉시 pause한다."""
@@ -191,16 +303,14 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         self._preview_priming = False
         self.player.pause()
 
-        state = self._current_edits()
-        if state is not None and state.trim is not None:
-            self.player.setPosition(state.trim[0])
-        else:
-            self.player.setPosition(0)
-
+        mapping = self._timeline_mapping()
+        self.player.setPosition(mapping.source_start_ms)
         self.audio_output.setMuted(False)
 
         if hasattr(self, "_speed_controller"):
             self._speed_controller.apply_current_rate()
+
+        self._refresh_timeline()
 
     def _toggle_playback(self) -> None:
         if self._preview_priming:
@@ -211,37 +321,18 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
             self.player.pause()
             return
 
-        state = self._current_edits()
-        if state is not None and state.trim is not None:
-            start_ms, end_ms = state.trim
-            position = self.player.position()
-            if position < start_ms or position >= end_ms:
-                self.player.setPosition(start_ms)
+        mapping = self._timeline_mapping()
+        position = self.player.position()
+        if (
+            position < mapping.source_start_ms
+            or position >= mapping.source_end_ms
+        ):
+            self.player.setPosition(mapping.source_start_ms)
 
         if hasattr(self, "_speed_controller"):
             self._speed_controller.apply_current_rate()
 
         self.player.play()
-
-    def _on_position_changed(self, position: int) -> None:
-        super()._on_position_changed(position)
-
-        if self._preview_priming:
-            return
-
-        state = self._current_edits()
-        if (
-            state is None
-            or state.trim is None
-            or self.player.playbackState()
-            != QMediaPlayer.PlaybackState.PlayingState
-        ):
-            return
-
-        start_ms, end_ms = state.trim
-        if position >= end_ms:
-            self.player.pause()
-            self.player.setPosition(start_ms)
 
     def _cancel_preview_priming(self) -> None:
         if not getattr(self, "_preview_priming", False):
