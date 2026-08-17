@@ -27,6 +27,14 @@ QLabel#sectionTitle {
     padding-bottom: 4px;
 }
 
+QLabel#selectionInfo {
+    color: #aeb8d6;
+    background: #171a20;
+    border: 1px solid #2d3440;
+    border-radius: 7px;
+    padding: 8px 10px;
+}
+
 QLabel#fileInfo {
     color: #a9b0bd;
     font-size: 12px;
@@ -88,8 +96,19 @@ QLabel#dropDescription {
 QPushButton {
     min-height: 36px;
     padding: 0 16px;
+    color: #dfe3eb;
+    background: #20242c;
+    border: 1px solid #343a46;
     border-radius: 8px;
     font-weight: 600;
+}
+
+QPushButton:hover {
+    background: #282d37;
+}
+
+QPushButton:pressed {
+    background: #181c23;
 }
 
 QPushButton#primaryButton {
@@ -132,6 +151,10 @@ QPushButton:disabled {
     border-color: #292e37;
 }
 
+QDialogButtonBox QPushButton {
+    min-width: 86px;
+}
+
 QDoubleSpinBox,
 QSpinBox,
 QComboBox {
@@ -143,6 +166,12 @@ QComboBox {
     border-radius: 7px;
 }
 
+QDoubleSpinBox:focus,
+QSpinBox:focus,
+QComboBox:focus {
+    border: 1px solid #6f88ff;
+}
+
 QComboBox QAbstractItemView {
     color: #e7eaf0;
     background: #171a20;
@@ -150,9 +179,17 @@ QComboBox QAbstractItemView {
     selection-background-color: #2b355d;
 }
 
-QCheckBox {
+QCheckBox,
+QRadioButton {
     color: #c3c9d3;
     spacing: 8px;
+    min-height: 28px;
+}
+
+QRadioButton::indicator,
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
 }
 
 QSlider::groove:horizontal {
