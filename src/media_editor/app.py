@@ -1,17 +1,23 @@
 import signal
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtMultimedia import QVideoFrame
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
 from media_editor.main_window import MainWindow
 from media_editor.media import MediaKind
+from media_editor.sequence_dialog import SequenceDialog
+from media_editor.sequence_export import (
+    build_sequence_command,
+    make_sequence_output_path,
+)
 from media_editor.style import APP_STYLE
 
 
 class PreviewReadyMainWindow(MainWindow):
-    """영상 import 직후 첫 frame을 자동으로 준비하는 MainWindow."""
+    """첫 frame preview와 Sequence 기능을 제공하는 MainWindow."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -19,6 +25,69 @@ class PreviewReadyMainWindow(MainWindow):
         self.video_widget.videoSink().videoFrameChanged.connect(
             self._on_preview_frame_changed
         )
+        self._install_sequence_button()
+        self._update_media_tools()
+
+    def _install_sequence_button(self) -> None:
+        """Header에 Sequence 진입 버튼을 추가한다."""
+        root_layout = self.centralWidget().layout()
+        header_layout = root_layout.itemAt(0).layout()
+
+        self.sequence_button = QPushButton("Sequence")
+        self.sequence_button.setObjectName("secondaryButton")
+        self.sequence_button.clicked.connect(self._request_sequence)
+        header_layout.insertWidget(
+            max(0, header_layout.count() - 1),
+            self.sequence_button,
+        )
+
+    def _update_media_tools(self) -> None:
+        super()._update_media_tools()
+        if not hasattr(self, "sequence_button"):
+            return
+
+        video_count = sum(
+            asset.kind is MediaKind.VIDEO for asset in self.project.assets
+        )
+        self.sequence_button.setEnabled(
+            video_count >= 2 and self._ffmpeg_process is None
+        )
+
+    def _request_sequence(self) -> None:
+        if self._ffmpeg_process is not None:
+            return
+
+        dialog = SequenceDialog(
+            self.project.assets,
+            self.current_asset,
+            self,
+        )
+        if not dialog.exec():
+            return
+
+        paths = dialog.sequence_paths
+        default_path = make_sequence_output_path(paths[0])
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Sequence",
+            str(default_path),
+            "MP4 Video (*.mp4)",
+        )
+        if not filename:
+            return
+
+        output_path = Path(filename)
+        if output_path.suffix.lower() != ".mp4":
+            output_path = output_path.with_suffix(".mp4")
+
+        try:
+            command = build_sequence_command(paths)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+
+        command.append(str(output_path))
+        self._start_ffmpeg_job(command, output_path, "Sequence Export")
 
     def _load_asset(self, asset) -> None:
         self._cancel_preview_priming()
