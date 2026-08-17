@@ -21,9 +21,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from media_editor.ffmpeg import build_upscale_command, make_upscale_output_path
+from media_editor.ffmpeg import (
+    build_mp4_export_command,
+    build_trim_command,
+    build_upscale_command,
+    make_mp4_output_path,
+    make_trim_output_path,
+    make_upscale_output_path,
+)
 from media_editor.media import MediaKind, format_duration
 from media_editor.project import MediaAsset, MediaProject
+from media_editor.trim_dialog import TrimDialog
 from media_editor.widgets import DropPreviewWidget
 
 
@@ -42,8 +50,9 @@ class MainWindow(QMainWindow):
         self.project = MediaProject()
         self.current_asset: MediaAsset | None = None
         self._slider_is_pressed = False
-        self._upscale_process: QProcess | None = None
-        self._upscale_output_path: Path | None = None
+        self._ffmpeg_process: QProcess | None = None
+        self._ffmpeg_output_path: Path | None = None
+        self._ffmpeg_action = ""
 
         self.audio_output = QAudioOutput(self)
         self.player = QMediaPlayer(self)
@@ -54,7 +63,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_player()
         self._update_playback_controls(False)
-        self._update_media_tools(False)
+        self._update_media_tools()
 
     def _build_ui(self) -> None:
         open_action = QAction("Open", self)
@@ -101,7 +110,9 @@ class MainWindow(QMainWindow):
         library_title.setObjectName("sectionTitle")
         self.media_list = QListWidget()
         self.media_list.setObjectName("mediaList")
-        self.media_list.currentItemChanged.connect(self._on_library_selection_changed)
+        self.media_list.currentItemChanged.connect(
+            self._on_library_selection_changed
+        )
 
         library_layout.addWidget(library_title)
         library_layout.addWidget(self.media_list)
@@ -117,9 +128,13 @@ class MainWindow(QMainWindow):
         self.preview.open_requested.connect(self._open_file_dialog)
         self.preview.set_video_widget(self.video_widget)
 
-        self.file_info = QLabel("파일을 import하거나 preview 영역에 드래그 앤 드롭하세요.")
+        self.file_info = QLabel(
+            "파일을 import하거나 preview 영역에 드래그 앤 드롭하세요."
+        )
         self.file_info.setObjectName("fileInfo")
-        self.file_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.file_info.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
 
         preview_layout.addWidget(self.preview, stretch=1)
         preview_layout.addWidget(self.file_info)
@@ -155,20 +170,21 @@ class MainWindow(QMainWindow):
         self.crop_button = QPushButton("Crop")
         self.resize_button = QPushButton("Resize")
         self.upscale_button = QPushButton("Upscale")
-        self.export_button = QPushButton("Export")
+        self.export_button = QPushButton("Export MP4")
 
-        for button in (
-            self.trim_button,
-            self.crop_button,
-            self.resize_button,
-            self.export_button,
-        ):
-            button.setObjectName("toolButton")
-            button.setEnabled(False)
-            button.setToolTip("다음 개발 단계에서 구현할 기능입니다.")
+        self.trim_button.setObjectName("toolButton")
+        self.trim_button.clicked.connect(self._request_trim)
 
         self.upscale_button.setObjectName("toolButton")
         self.upscale_button.clicked.connect(self._request_upscale)
+
+        self.export_button.setObjectName("toolButton")
+        self.export_button.clicked.connect(self._request_mp4_export)
+
+        for button in (self.crop_button, self.resize_button):
+            button.setObjectName("toolButton")
+            button.setEnabled(False)
+            button.setToolTip("다음 개발 단계에서 구현할 기능입니다.")
 
         controls_layout.addWidget(self.play_button)
         controls_layout.addSpacing(8)
@@ -190,7 +206,9 @@ class MainWindow(QMainWindow):
     def _connect_player(self) -> None:
         self.player.positionChanged.connect(self._on_position_changed)
         self.player.durationChanged.connect(self._on_duration_changed)
-        self.player.playbackStateChanged.connect(self._on_playback_state_changed)
+        self.player.playbackStateChanged.connect(
+            self._on_playback_state_changed
+        )
         self.player.errorOccurred.connect(self._on_player_error)
 
     def _open_file_dialog(self) -> None:
@@ -233,6 +251,15 @@ class MainWindow(QMainWindow):
         if errors:
             self._show_error("\n".join(errors))
 
+    def _select_asset_path(self, path: Path) -> None:
+        resolved = path.resolve()
+        for row in range(self.media_list.count()):
+            item = self.media_list.item(row)
+            asset = item.data(ASSET_ROLE)
+            if isinstance(asset, MediaAsset) and asset.path.resolve() == resolved:
+                self.media_list.setCurrentItem(item)
+                return
+
     def _on_library_selection_changed(
         self,
         current: QListWidgetItem | None,
@@ -250,7 +277,7 @@ class MainWindow(QMainWindow):
         self.player.stop()
         self.current_asset = asset
         self.file_info.setText(str(asset.path))
-        self._update_media_tools(True)
+        self._update_media_tools()
 
         if asset.kind is MediaKind.IMAGE:
             self.player.setSource(QUrl())
@@ -276,11 +303,55 @@ class MainWindow(QMainWindow):
             self.duration_time.setText("00:00")
             self.play_button.setText("▶  Play")
 
-    def _update_media_tools(self, enabled: bool) -> None:
-        self.upscale_button.setEnabled(enabled)
+    def _update_media_tools(self) -> None:
+        busy = self._ffmpeg_process is not None
+        has_asset = self.current_asset is not None
+        has_video = (
+            has_asset and self.current_asset.kind is MediaKind.VIDEO
+        )
+
+        self.upscale_button.setEnabled(has_asset and not busy)
+        self.trim_button.setEnabled(has_video and not busy)
+        self.export_button.setEnabled(has_video and not busy)
+
+    def _request_trim(self) -> None:
+        if (
+            self.current_asset is None
+            or self.current_asset.kind is not MediaKind.VIDEO
+            or self._ffmpeg_process is not None
+        ):
+            return
+
+        duration_ms = self.player.duration()
+        if duration_ms <= 0:
+            self._show_error("영상 길이를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요.")
+            return
+
+        self.player.pause()
+        dialog = TrimDialog(
+            duration_ms,
+            self.player.position(),
+            self,
+        )
+        if not dialog.exec():
+            return
+
+        output_path = make_trim_output_path(self.current_asset.path)
+        try:
+            command = build_trim_command(
+                self.current_asset.path,
+                output_path,
+                dialog.start_ms,
+                dialog.end_ms,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+
+        self._start_ffmpeg_job(command, output_path, "Trim")
 
     def _request_upscale(self) -> None:
-        if self.current_asset is None or self._upscale_process is not None:
+        if self.current_asset is None or self._ffmpeg_process is not None:
             return
 
         choices = ["Standard 2×", "Standard 4×", "AI Upscale (준비 중)"]
@@ -304,12 +375,6 @@ class MainWindow(QMainWindow):
             return
 
         scale = 2 if "2×" in choice else 4
-        self._start_standard_upscale(scale)
-
-    def _start_standard_upscale(self, scale: int) -> None:
-        if self.current_asset is None:
-            return
-
         output_path = make_upscale_output_path(
             self.current_asset.path,
             self.current_asset.kind,
@@ -327,46 +392,104 @@ class MainWindow(QMainWindow):
             self._show_error(str(exc))
             return
 
-        process = QProcess(self)
-        process.finished.connect(self._on_upscale_finished)
-        process.errorOccurred.connect(self._on_upscale_process_error)
-        self._upscale_process = process
-        self._upscale_output_path = output_path
-        self.upscale_button.setEnabled(False)
-        self.file_info.setText(f"Upscaling... → {output_path}")
+        self._start_ffmpeg_job(command, output_path, "Upscale")
 
+    def _request_mp4_export(self) -> None:
+        if (
+            self.current_asset is None
+            or self.current_asset.kind is not MediaKind.VIDEO
+            or self._ffmpeg_process is not None
+        ):
+            return
+
+        default_path = make_mp4_output_path(self.current_asset.path)
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export MP4",
+            str(default_path),
+            "MP4 Video (*.mp4)",
+        )
+        if not filename:
+            return
+
+        output_path = Path(filename)
+        if output_path.suffix.lower() != ".mp4":
+            output_path = output_path.with_suffix(".mp4")
+
+        try:
+            command = build_mp4_export_command(
+                self.current_asset.path,
+                output_path,
+            )
+        except FileNotFoundError as exc:
+            self._show_error(str(exc))
+            return
+
+        self._start_ffmpeg_job(command, output_path, "MP4 Export")
+
+    def _start_ffmpeg_job(
+        self,
+        command: list[str],
+        output_path: Path,
+        action: str,
+    ) -> None:
+        if self._ffmpeg_process is not None:
+            return
+
+        process = QProcess(self)
+        process.finished.connect(self._on_ffmpeg_finished)
+        process.errorOccurred.connect(self._on_ffmpeg_process_error)
+
+        self._ffmpeg_process = process
+        self._ffmpeg_output_path = output_path
+        self._ffmpeg_action = action
+        self._update_media_tools()
+        self.file_info.setText(f"{action} 실행 중... → {output_path}")
         process.start(command[0], command[1:])
 
-    def _on_upscale_finished(
+    def _on_ffmpeg_finished(
         self,
         exit_code: int,
         exit_status: QProcess.ExitStatus,
     ) -> None:
-        process = self._upscale_process
-        output_path = self._upscale_output_path
-        self._upscale_process = None
-        self._upscale_output_path = None
-        self.upscale_button.setEnabled(self.current_asset is not None)
+        process = self._ffmpeg_process
+        output_path = self._ffmpeg_output_path
+        action = self._ffmpeg_action
+
+        self._ffmpeg_process = None
+        self._ffmpeg_output_path = None
+        self._ffmpeg_action = ""
+        self._update_media_tools()
 
         if process is None or output_path is None:
             return
 
         if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
-            stderr = bytes(process.readAllStandardError()).decode(errors="replace").strip()
-            self._show_error(f"Upscale에 실패했습니다.\n\n{stderr}")
+            stderr = bytes(process.readAllStandardError()).decode(
+                errors="replace"
+            ).strip()
+            self._show_error(f"{action}에 실패했습니다.\n\n{stderr}")
             return
 
-        self.file_info.setText(f"Upscale 완료: {output_path}")
         self._import_paths([output_path])
+        self._select_asset_path(output_path)
+        self.file_info.setText(f"{action} 완료: {output_path}")
         QMessageBox.information(
             self,
-            "Upscale 완료",
+            f"{action} 완료",
             f"파일을 만들었습니다.\n\n{output_path}",
         )
 
-    def _on_upscale_process_error(self, error: QProcess.ProcessError) -> None:
-        if error == QProcess.ProcessError.Crashed:
-            self._show_error("ffmpeg process가 비정상 종료되었습니다.")
+    def _on_ffmpeg_process_error(self, error: QProcess.ProcessError) -> None:
+        if error != QProcess.ProcessError.FailedToStart:
+            return
+
+        action = self._ffmpeg_action or "FFmpeg 작업"
+        self._ffmpeg_process = None
+        self._ffmpeg_output_path = None
+        self._ffmpeg_action = ""
+        self._update_media_tools()
+        self._show_error(f"{action}을 시작하지 못했습니다. ffmpeg 설치 상태를 확인해 주세요.")
 
     def _toggle_playback(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -374,7 +497,10 @@ class MainWindow(QMainWindow):
             return
         self.player.play()
 
-    def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+    def _on_playback_state_changed(
+        self,
+        state: QMediaPlayer.PlaybackState,
+    ) -> None:
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.play_button.setText("Ⅱ  Pause")
         else:
