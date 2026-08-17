@@ -1,5 +1,6 @@
 APP_STYLE = """
-QWidget#root {
+QWidget#root,
+QDialog {
     background: #111318;
     color: #e7eaf0;
 }
@@ -13,7 +14,8 @@ QLabel#appTitle {
     font-weight: 700;
 }
 
-QLabel#appSubtitle {
+QLabel#appSubtitle,
+QLabel#dialogDescription {
     color: #8f96a3;
     font-size: 13px;
 }
@@ -128,6 +130,15 @@ QPushButton:disabled {
     color: #5e6570;
     background: #171a20;
     border-color: #292e37;
+}
+
+QDoubleSpinBox {
+    min-height: 34px;
+    padding: 0 8px;
+    color: #e7eaf0;
+    background: #171a20;
+    border: 1px solid #343a46;
+    border-radius: 7px;
 }
 
 QSlider::groove:horizontal {
