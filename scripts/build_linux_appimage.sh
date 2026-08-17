@@ -8,13 +8,24 @@ VENV="${BUILD_ROOT}/venv"
 APPDIR="${BUILD_ROOT}/MyMediaEditor.AppDir"
 LINUXDEPLOY="${BUILD_ROOT}/linuxdeploy-x86_64.AppImage"
 LINUXDEPLOY_VERSION="1-alpha-20251107-1"
+DEPLOYMENT_ROOT="${PROJECT_ROOT}/deployment"
 
 if [[ "$(uname -m)" != "x86_64" ]]; then
   echo "현재 build script는 Linux x86_64만 지원합니다." >&2
   exit 1
 fi
 
-rm -rf "${BUILD_ROOT}"
+for command in python3 curl patchelf; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "필수 command '${command}'를 찾지 못했습니다." >&2
+    if [[ "${command}" == "patchelf" ]]; then
+      echo "Ubuntu 22.04에서는 'sudo apt install -y patchelf'로 설치해 주세요." >&2
+    fi
+    exit 1
+  fi
+done
+
+rm -rf "${BUILD_ROOT}" "${DEPLOYMENT_ROOT}"
 mkdir -p "${BUILD_ROOT}" "${DIST_ROOT}"
 
 python3 -m venv "${VENV}"
@@ -30,13 +41,18 @@ pushd "${PROJECT_ROOT}" >/dev/null
 popd >/dev/null
 
 STANDALONE_BIN="$(
-  find "${PROJECT_ROOT}" -maxdepth 3 -type f -name 'MyMediaEditor.bin' \
-    ! -path "${BUILD_ROOT}/*" \
+  find "${DEPLOYMENT_ROOT}" -maxdepth 2 -type f \
+    \( -name 'MyMediaEditor.bin' -o -name 'deploy_main.bin' -o -name 'MyMediaEditor' -o -name 'deploy_main' \) \
+    -perm -u+x \
     -print -quit
 )"
 
 if [[ -z "${STANDALONE_BIN}" ]]; then
-  echo "pyside6-deploy 결과 MyMediaEditor.bin을 찾지 못했습니다." >&2
+  echo "pyside6-deploy 결과 실행 파일을 찾지 못했습니다." >&2
+  echo "확인 경로: ${DEPLOYMENT_ROOT}" >&2
+  if [[ -d "${DEPLOYMENT_ROOT}" ]]; then
+    find "${DEPLOYMENT_ROOT}" -maxdepth 2 -type f -print >&2 || true
+  fi
   exit 1
 fi
 
