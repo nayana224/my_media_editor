@@ -29,7 +29,6 @@ class DropPreviewWidget(QFrame):
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setObjectName("imagePreview")
         self.image_label.setMinimumSize(320, 240)
-
         self.video_page = QWidget()
 
         self.stack.addWidget(self.empty_page)
@@ -82,14 +81,14 @@ class DropPreviewWidget(QFrame):
         self._update_scaled_image()
 
     def set_video_widget(self, video_widget: QWidget) -> None:
-        if self.stack.indexOf(video_widget) < 0:
-            old_layout = self.video_page.layout()
-            if old_layout is None:
-                layout = QVBoxLayout(self.video_page)
-                layout.setContentsMargins(0, 0, 0, 0)
-            else:
-                layout = old_layout
+        layout = self.video_page.layout()
+        if layout is None:
+            layout = QVBoxLayout(self.video_page)
+            layout.setContentsMargins(0, 0, 0, 0)
+
+        if layout.indexOf(video_widget) < 0:
             layout.addWidget(video_widget)
+            return
 
         self.stack.setCurrentWidget(self.video_page)
 
