@@ -40,6 +40,18 @@ def make_upscale_output_path(
     return _make_unique_path(candidate)
 
 
+def make_edit_output_path(
+    input_path: Path,
+    kind: MediaKind,
+    action: str,
+) -> Path:
+    """편집 결과를 원본과 같은 폴더에 고유한 이름으로 만든다."""
+    suffix = ".png" if kind is MediaKind.IMAGE else ".mp4"
+    return _make_unique_path(
+        input_path.with_name(f"{input_path.stem}_{action}{suffix}")
+    )
+
+
 def make_trim_output_path(input_path: Path) -> Path:
     """원본과 같은 폴더에 고유한 trim output 경로를 만든다."""
     return _make_unique_path(
@@ -89,17 +101,12 @@ def _h264_mp4_options(video_filter: str | None = None) -> list[str]:
     return options
 
 
-def build_upscale_command(
+def _build_filter_command(
     input_path: Path,
     output_path: Path,
     kind: MediaKind,
-    scale: int,
+    video_filter: str,
 ) -> list[str]:
-    """Lanczos 기반 standard upscale용 ffmpeg 명령을 만든다."""
-    if scale not in (2, 4):
-        raise ValueError("Standard upscale scale은 2 또는 4만 지원합니다.")
-
-    scale_filter = f"scale=iw*{scale}:ih*{scale}:flags=lanczos"
     command = [
         find_ffmpeg(),
         "-hide_banner",
@@ -112,7 +119,7 @@ def build_upscale_command(
         command.extend(
             [
                 "-vf",
-                scale_filter,
+                video_filter,
                 "-frames:v",
                 "1",
                 str(output_path),
@@ -120,10 +127,95 @@ def build_upscale_command(
         )
         return command
 
-    video_filter = f"{scale_filter},pad=ceil(iw/2)*2:ceil(ih/2)*2"
-    command.extend(_h264_mp4_options(video_filter))
+    command.extend(
+        _h264_mp4_options(
+            f"{video_filter},pad=ceil(iw/2)*2:ceil(ih/2)*2"
+        )
+    )
     command.append(str(output_path))
     return command
+
+
+def build_upscale_command(
+    input_path: Path,
+    output_path: Path,
+    kind: MediaKind,
+    scale: int,
+) -> list[str]:
+    """Lanczos 기반 standard upscale용 ffmpeg 명령을 만든다."""
+    if scale not in (2, 4):
+        raise ValueError("Standard upscale scale은 2 또는 4만 지원합니다.")
+
+    scale_filter = f"scale=iw*{scale}:ih*{scale}:flags=lanczos"
+    return _build_filter_command(
+        input_path,
+        output_path,
+        kind,
+        scale_filter,
+    )
+
+
+def build_crop_command(
+    input_path: Path,
+    output_path: Path,
+    kind: MediaKind,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+) -> list[str]:
+    """지정한 pixel 영역만 남기는 crop 명령을 만든다."""
+    if min(x, y) < 0 or width <= 0 or height <= 0:
+        raise ValueError("Crop 위치와 크기를 확인해 주세요.")
+
+    return _build_filter_command(
+        input_path,
+        output_path,
+        kind,
+        f"crop={width}:{height}:{x}:{y}",
+    )
+
+
+def build_resize_command(
+    input_path: Path,
+    output_path: Path,
+    kind: MediaKind,
+    width: int,
+    height: int,
+) -> list[str]:
+    """Lanczos로 지정 해상도에 맞추는 resize 명령을 만든다."""
+    if width <= 0 or height <= 0:
+        raise ValueError("Resize 해상도는 1 px 이상이어야 합니다.")
+
+    return _build_filter_command(
+        input_path,
+        output_path,
+        kind,
+        f"scale={width}:{height}:flags=lanczos",
+    )
+
+
+def build_rotate_command(
+    input_path: Path,
+    output_path: Path,
+    kind: MediaKind,
+    degrees: int,
+) -> list[str]:
+    """90도 단위 회전 명령을 만든다."""
+    filters = {
+        90: "transpose=1",
+        180: "hflip,vflip",
+        270: "transpose=2",
+    }
+    if degrees not in filters:
+        raise ValueError("Rotate는 90, 180, 270도만 지원합니다.")
+
+    return _build_filter_command(
+        input_path,
+        output_path,
+        kind,
+        filters[degrees],
+    )
 
 
 def build_trim_command(
