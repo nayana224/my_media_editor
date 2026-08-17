@@ -1,5 +1,7 @@
+import signal
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtMultimedia import QVideoFrame
 from PySide6.QtWidgets import QApplication
 
@@ -55,6 +57,20 @@ class PreviewReadyMainWindow(MainWindow):
         self._preview_priming = False
         self.audio_output.setMuted(False)
 
+    def shutdown(self) -> None:
+        """재생 및 FFmpeg child process를 정리한다."""
+        self._cancel_preview_priming()
+        self.player.stop()
+
+        process = getattr(self, "_ffmpeg_process", None)
+        if process is None:
+            return
+
+        process.terminate()
+        if not process.waitForFinished(1500):
+            process.kill()
+            process.waitForFinished(1000)
+
 
 def main() -> None:
     app = QApplication(sys.argv)
@@ -63,6 +79,27 @@ def main() -> None:
     app.setStyleSheet(APP_STYLE)
 
     window = PreviewReadyMainWindow()
+    shutting_down = {"active": False}
+
+    def request_shutdown(signum=None, frame=None) -> None:
+        del signum, frame
+        if shutting_down["active"]:
+            return
+        shutting_down["active"] = True
+        window.shutdown()
+        app.closeAllWindows()
+        app.quit()
+
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
+
+    # Qt event loop 중에도 Python signal handler가 처리될 기회를 준다.
+    signal_pump = QTimer()
+    signal_pump.setInterval(200)
+    signal_pump.timeout.connect(lambda: None)
+    signal_pump.start()
+
+    app.aboutToQuit.connect(window.shutdown)
     window.show()
 
     raise SystemExit(app.exec())
