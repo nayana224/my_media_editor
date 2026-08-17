@@ -6,11 +6,10 @@ from PySide6.QtCore import QTimer
 from PySide6.QtMultimedia import QMediaPlayer, QVideoFrame
 from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
-from media_editor.edit_state import EditState
+from media_editor.app_live_helpers import LiveDialogMixin
 from media_editor.main_window import MainWindow
 from media_editor.media import MediaKind
 from media_editor.preview_transform import apply_preview_edits
-from media_editor.rotate_dialog import RotateDialog
 from media_editor.sequence_dialog import SequenceDialog
 from media_editor.sequence_export import (
     build_sequence_command,
@@ -21,8 +20,8 @@ from media_editor.style import APP_STYLE
 from media_editor.widgets import EditedVideoWidget
 
 
-class PreviewReadyMainWindow(MainWindow):
-    """첫 frame, pending edit live preview와 Sequence를 제공한다."""
+class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
+    """첫 frame, 누적 편집 live preview와 Sequence를 제공한다."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -177,52 +176,6 @@ class PreviewReadyMainWindow(MainWindow):
         self._refresh_pending_preview()
         if hasattr(self, "_speed_controller"):
             self._speed_controller.refresh()
-
-    def _request_trim(self) -> None:
-        super()._request_trim()
-        self._refresh_pending_preview()
-
-    def _request_crop(self) -> None:
-        super()._request_crop()
-        self._refresh_pending_preview()
-
-    def _request_resize(self) -> None:
-        super()._request_resize()
-        self._refresh_pending_preview()
-
-    def _request_rotate(self) -> None:
-        """누적 편집 상태를 고려한 dial 기반 Rotate dialog를 연다."""
-        if self.current_asset is None or self._ffmpeg_process is not None:
-            return
-
-        state = self._current_edits()
-        source = self._source_preview_image()
-        if state is None or source.isNull():
-            self._show_error(
-                "Rotate Preview를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요."
-            )
-            return
-
-        before_rotate = EditState(crop=state.crop)
-        base_image = apply_preview_edits(source, before_rotate)
-
-        dialog = RotateDialog(
-            base_image=base_image,
-            current_degrees=state.rotation or 0,
-            post_resize=state.resize,
-            parent=self,
-        )
-        if not dialog.exec():
-            return
-
-        state.rotation = None if dialog.degrees == 0 else dialog.degrees
-        self._refresh_pending_preview()
-        self._update_edit_status()
-        self._update_media_tools()
-
-    def _request_upscale(self) -> None:
-        super()._request_upscale()
-        self._refresh_pending_preview()
 
     def _prime_video_preview(self) -> None:
         """소리 없이 첫 유효 frame을 decode한 뒤 즉시 pause한다."""
