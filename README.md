@@ -22,19 +22,28 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
   - Start / End를 각각 slider로 조절
   - 시간 값을 초 단위로 직접 입력 가능
   - 현재 preview 위치를 Start 또는 End로 바로 지정
+  - `Start = 0`, `End = 끝`, `전체 길이` 빠른 설정
+  - 선택 구간 길이를 dialog에서 즉시 표시
   - Trim 결과를 H.264 / AAC MP4로 출력
 - Crop
   - Image / Video 모두 지원
-  - X / Y / Width / Height를 GUI에서 pixel 단위로 지정
+  - 현재 preview를 보면서 crop 영역을 마우스로 직접 선택
+  - 선택 영역 내부 drag로 위치 이동
+  - 네 모서리 handle drag로 크기 조절
+  - 자유 / 원본 비율 / 16:9 / 4:3 / 1:1 aspect preset
+  - `가운데 80%`, `전체 프레임` 빠른 선택
+  - X / Y / Width / Height pixel 값을 함께 표시하고 직접 수정 가능
 - Resize
   - Image / Video 모두 지원
   - Original / 1080p / 720p / 480p / 360p preset
   - Custom width / height 입력
   - 가로세로 비율 유지 option
+  - 최종 출력 크기와 원본 대비 scale 표시
 - Rotate
   - Image / Video 모두 지원
-  - 90° clockwise / 180° / 90° counter-clockwise
+  - 90° clockwise / 180° / 90° counter-clockwise를 radio button으로 바로 선택
 - Standard Upscale 2x / 4x
+  - 전용 GUI에서 2x / 4x 선택
   - Image: Lanczos scale 후 PNG 출력
   - Video: Lanczos scale 후 H.264 / AAC MP4 출력
 - MP4 Export
@@ -65,6 +74,13 @@ PySide6 GUI
     |       +-- Add / Remove
     |
     +-- Qt Multimedia  -> Preview / Seek
+    |
+    +-- Edit Dialogs
+    |       |-- Trim slider
+    |       |-- Interactive Crop selection
+    |       |-- Resize preset / custom
+    |       |-- Rotate
+    |       +-- Upscale
     |
     +-- FFmpeg
           |-- Trim
@@ -118,7 +134,9 @@ cd ~/inpyo_ws/my_media_editor
 4. Start / End slider를 움직여 남길 구간을 지정합니다.
 5. 필요하면 시간 입력란에 초 단위 값을 직접 입력합니다.
 6. `현재 위치 사용`을 누르면 Trim dialog를 열기 직전의 preview 위치가 적용됩니다.
-7. 확인하면 원본과 같은 폴더에 `*_trimmed.mp4`가 생성됩니다.
+7. `Start = 0`, `End = 끝`, `전체 길이` 버튼으로 빠르게 범위를 초기화할 수 있습니다.
+8. dialog 하단에서 최종 선택 영상 길이를 확인하고 실행합니다.
+9. 원본과 같은 폴더에 `*_trimmed.mp4`가 생성됩니다.
 
 Trim은 stream copy가 아니라 H.264 / AAC로 재인코딩합니다. 따라서 keyframe 위치에만
 의존하지 않고 사용자가 지정한 구간을 정확하게 자르는 것을 우선합니다.
@@ -127,21 +145,40 @@ Trim은 stream copy가 아니라 H.264 / AAC로 재인코딩합니다. 따라서
 
 ### Crop
 
-`Crop`을 누르면 원본 해상도가 표시되고 X / Y / Width / Height를 pixel 단위로 지정할 수
-있습니다. Crop 영역이 원본 frame 밖으로 나가면 실행하지 않습니다.
+`Crop`을 누르면 현재 preview가 큰 편집 canvas로 열립니다.
+
+- 빈 영역에서 drag: 새 crop 영역 생성
+- 선택 영역 안에서 drag: crop 영역 이동
+- 네 모서리의 흰색 handle drag: 크기 조절
+- 3등분 guide line으로 화면 구도 확인
+- 자유 / 원본 비율 / 16:9 / 4:3 / 1:1 aspect preset
+- `가운데 80%`, `전체 프레임` 빠른 선택
+- 정확한 좌표가 필요하면 X / Y / Width / Height 값을 직접 수정
+
+선택 영역의 크기, 위치, 원본 대비 면적 비율도 dialog에서 바로 확인할 수 있습니다.
+
+Video crop은 `Crop`을 누른 시점의 현재 preview frame을 기준으로 영역을 선택하며,
+선택한 pixel 좌표는 전체 영상 frame에 동일하게 적용됩니다.
 
 ### Resize
 
 `Resize`에서 preset 해상도를 선택하거나 custom width / height를 입력할 수 있습니다.
-`가로세로 비율 유지`가 켜져 있으면 한쪽 값을 바꿀 때 원본 aspect ratio 기준으로 다른
-값이 자동 계산됩니다.
+`가로세로 비율 유지`가 켜져 있으면 원본 aspect ratio를 유지하면서 preset 영역 안에
+들어가는 최대 크기를 계산합니다. dialog 하단에서 최종 출력 크기와 원본 대비 scale을
+확인할 수 있습니다.
 
 ### Rotate
 
-`Rotate`에서 90° clockwise, 180°, 90° counter-clockwise 중 하나를 선택합니다.
+`Rotate` dialog에서 90° clockwise, 180°, 90° counter-clockwise 중 하나를 바로 선택합니다.
 
 Image 편집 결과는 PNG, Video 편집 결과는 H.264 / AAC MP4로 생성합니다. 원본은
 덮어쓰지 않고 `_cropped`, `_resized`, `_rotated` suffix를 붙입니다.
+
+## Upscale
+
+`Upscale` dialog에서 Standard 2x 또는 4x를 선택합니다. 현재 Standard Upscale은 Lanczos
+filter 기반이며 AI 복원 기능은 아닙니다. AI Upscale은 추후 Real-ESRGAN backend로
+별도 추가할 예정입니다.
 
 ## WebM -> MP4 변환
 
