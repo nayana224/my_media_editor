@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 class DropPreviewWidget(QFrame):
     """파일 drop과 이미지 preview를 담당한다."""
 
-    file_dropped = Signal(Path)
+    files_dropped = Signal(object)
     open_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -56,7 +56,7 @@ class DropPreviewWidget(QFrame):
         title_label.setObjectName("dropTitle")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        description_label = QLabel("PNG · JPG · JPEG · WebM · MP4")
+        description_label = QLabel("여러 PNG · JPG · JPEG · WebM · MP4 파일을 지원합니다")
         description_label.setObjectName("dropDescription")
         description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -114,23 +114,21 @@ class DropPreviewWidget(QFrame):
         self.image_label.setPixmap(scaled)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        mime_data = event.mimeData()
-        if mime_data.hasUrls() and len(mime_data.urls()) == 1:
+        if event.mimeData().hasUrls():
             event.acceptProposedAction()
             return
 
         event.ignore()
 
     def dropEvent(self, event: QDropEvent) -> None:
-        urls = event.mimeData().urls()
-        if len(urls) != 1:
+        paths = [
+            Path(url.toLocalFile())
+            for url in event.mimeData().urls()
+            if url.isLocalFile()
+        ]
+        if not paths:
             event.ignore()
             return
 
-        path = Path(urls[0].toLocalFile())
-        if not path:
-            event.ignore()
-            return
-
-        self.file_dropped.emit(path)
+        self.files_dropped.emit(paths)
         event.acceptProposedAction()
