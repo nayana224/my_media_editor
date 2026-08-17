@@ -1,8 +1,14 @@
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from media_editor.ffmpeg import build_upscale_command
+from media_editor.ffmpeg import (
+    build_mp4_export_command,
+    build_trim_command,
+    build_upscale_command,
+    make_mp4_output_path,
+)
 from media_editor.media import MediaKind
 
 
@@ -17,6 +23,7 @@ class BuildUpscaleCommandTest(unittest.TestCase):
         )
 
         self.assertIn("scale=iw*2:ih*2:flags=lanczos", command)
+        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
         self.assertIn("libx264", command)
         self.assertIn("aac", command)
         vsync_index = command.index("-vsync")
@@ -42,6 +49,55 @@ class BuildUpscaleCommandTest(unittest.TestCase):
                 Path("output.mp4"),
                 MediaKind.VIDEO,
                 3,
+            )
+
+
+class BuildTrimCommandTest(unittest.TestCase):
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_builds_trim_command_with_duration(self, _mock_find_ffmpeg) -> None:
+        command = build_trim_command(
+            Path("input.webm"),
+            Path("trimmed.mp4"),
+            1_500,
+            4_750,
+        )
+
+        start_index = command.index("-ss")
+        duration_index = command.index("-t")
+        self.assertEqual(command[start_index + 1], "1.500")
+        self.assertEqual(command[duration_index + 1], "3.250")
+        self.assertIn("libx264", command)
+        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
+
+    def test_rejects_invalid_trim_range(self) -> None:
+        with self.assertRaises(ValueError):
+            build_trim_command(
+                Path("input.webm"),
+                Path("trimmed.mp4"),
+                5_000,
+                5_000,
+            )
+
+
+class BuildMp4ExportCommandTest(unittest.TestCase):
+    @patch("media_editor.ffmpeg.find_ffmpeg", return_value="/usr/bin/ffmpeg")
+    def test_builds_h264_aac_export(self, _mock_find_ffmpeg) -> None:
+        command = build_mp4_export_command(
+            Path("input.webm"),
+            Path("output.mp4"),
+        )
+
+        self.assertIn("libx264", command)
+        self.assertIn("aac", command)
+        self.assertIn("yuv420p", command)
+        self.assertEqual(command[-1], "output.mp4")
+
+    def test_webm_default_export_uses_mp4_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_path = Path(temp_dir) / "sample.webm"
+            self.assertEqual(
+                make_mp4_output_path(input_path),
+                Path(temp_dir) / "sample.mp4",
             )
 
 
