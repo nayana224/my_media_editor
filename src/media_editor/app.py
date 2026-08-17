@@ -6,9 +6,11 @@ from PySide6.QtCore import QTimer
 from PySide6.QtMultimedia import QMediaPlayer, QVideoFrame
 from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
+from media_editor.edit_state import EditState
 from media_editor.main_window import MainWindow
 from media_editor.media import MediaKind
 from media_editor.preview_transform import apply_preview_edits
+from media_editor.rotate_dialog import RotateDialog
 from media_editor.sequence_dialog import SequenceDialog
 from media_editor.sequence_export import (
     build_sequence_command,
@@ -115,9 +117,12 @@ class PreviewReadyMainWindow(MainWindow):
 
         if asset.kind is MediaKind.VIDEO:
             self._prime_video_preview()
-            return
+        else:
+            self._refresh_pending_preview()
 
-        self._refresh_pending_preview()
+        if hasattr(self, "_speed_controller"):
+            self._speed_controller.apply_current_rate()
+            self._speed_controller.refresh()
 
     def _source_media_size(self) -> tuple[int, int] | None:
         if self.current_asset is None:
@@ -168,7 +173,10 @@ class PreviewReadyMainWindow(MainWindow):
 
     def _reset_current_edits(self) -> None:
         super()._reset_current_edits()
+        self.player.setPlaybackRate(1.0)
         self._refresh_pending_preview()
+        if hasattr(self, "_speed_controller"):
+            self._speed_controller.refresh()
 
     def _request_trim(self) -> None:
         super()._request_trim()
@@ -183,8 +191,34 @@ class PreviewReadyMainWindow(MainWindow):
         self._refresh_pending_preview()
 
     def _request_rotate(self) -> None:
-        super()._request_rotate()
+        """누적 편집 상태를 고려한 dial 기반 Rotate dialog를 연다."""
+        if self.current_asset is None or self._ffmpeg_process is not None:
+            return
+
+        state = self._current_edits()
+        source = self._source_preview_image()
+        if state is None or source.isNull():
+            self._show_error(
+                "Rotate Preview를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요."
+            )
+            return
+
+        before_rotate = EditState(crop=state.crop)
+        base_image = apply_preview_edits(source, before_rotate)
+
+        dialog = RotateDialog(
+            base_image=base_image,
+            current_degrees=state.rotation or 0,
+            post_resize=state.resize,
+            parent=self,
+        )
+        if not dialog.exec():
+            return
+
+        state.rotation = None if dialog.degrees == 0 else dialog.degrees
         self._refresh_pending_preview()
+        self._update_edit_status()
+        self._update_media_tools()
 
     def _request_upscale(self) -> None:
         super()._request_upscale()
@@ -212,6 +246,9 @@ class PreviewReadyMainWindow(MainWindow):
 
         self.audio_output.setMuted(False)
 
+        if hasattr(self, "_speed_controller"):
+            self._speed_controller.apply_current_rate()
+
     def _toggle_playback(self) -> None:
         if self._preview_priming:
             self._preview_priming = False
@@ -227,6 +264,9 @@ class PreviewReadyMainWindow(MainWindow):
             position = self.player.position()
             if position < start_ms or position >= end_ms:
                 self.player.setPosition(start_ms)
+
+        if hasattr(self, "_speed_controller"):
+            self._speed_controller.apply_current_rate()
 
         self.player.play()
 
@@ -293,7 +333,6 @@ def main() -> None:
     signal.signal(signal.SIGINT, request_shutdown)
     signal.signal(signal.SIGTERM, request_shutdown)
 
-    # Qt event loop 중에도 Python signal handler가 처리될 기회를 준다.
     signal_pump = QTimer()
     signal_pump.setInterval(200)
     signal_pump.timeout.connect(lambda: None)
