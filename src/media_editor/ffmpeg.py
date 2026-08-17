@@ -1,19 +1,13 @@
 from pathlib import Path
-import shutil
 
 from media_editor.edit_state import EditState
 from media_editor.media import MediaKind
+from media_editor.runtime_tools import find_runtime_tool
 
 
 def find_ffmpeg() -> str:
-    """PATH에서 ffmpeg 실행 파일을 찾는다."""
-    ffmpeg_path = shutil.which("ffmpeg")
-    if ffmpeg_path is None:
-        raise FileNotFoundError(
-            "ffmpeg를 찾을 수 없습니다. Ubuntu에서는 'sudo apt install ffmpeg'로 "
-            "설치하고 Windows에서는 ffmpeg를 PATH에 추가해 주세요."
-        )
-    return ffmpeg_path
+    """배포 bundle 또는 PATH에서 ffmpeg 실행 파일을 찾는다."""
+    return find_runtime_tool("ffmpeg")
 
 
 def _make_unique_path(candidate: Path) -> Path:
