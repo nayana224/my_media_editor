@@ -1,4 +1,4 @@
-from media_editor.app import main
+from media_editor.bootstrap import main
 
 
 main()
