@@ -306,9 +306,7 @@ class MainWindow(QMainWindow):
     def _update_media_tools(self) -> None:
         busy = self._ffmpeg_process is not None
         has_asset = self.current_asset is not None
-        has_video = (
-            has_asset and self.current_asset.kind is MediaKind.VIDEO
-        )
+        has_video = has_asset and self.current_asset.kind is MediaKind.VIDEO
 
         self.upscale_button.setEnabled(has_asset and not busy)
         self.trim_button.setEnabled(has_video and not busy)
@@ -324,7 +322,9 @@ class MainWindow(QMainWindow):
 
         duration_ms = self.player.duration()
         if duration_ms <= 0:
-            self._show_error("영상 길이를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요.")
+            self._show_error(
+                "영상 길이를 아직 읽지 못했습니다. 잠시 후 다시 시도해 주세요."
+            )
             return
 
         self.player.pause()
@@ -416,6 +416,10 @@ class MainWindow(QMainWindow):
         if output_path.suffix.lower() != ".mp4":
             output_path = output_path.with_suffix(".mp4")
 
+        if output_path.resolve() == self.current_asset.path.resolve():
+            self._show_error("입력 영상과 같은 경로로 export할 수 없습니다.")
+            return
+
         try:
             command = build_mp4_export_command(
                 self.current_asset.path,
@@ -489,7 +493,9 @@ class MainWindow(QMainWindow):
         self._ffmpeg_output_path = None
         self._ffmpeg_action = ""
         self._update_media_tools()
-        self._show_error(f"{action}을 시작하지 못했습니다. ffmpeg 설치 상태를 확인해 주세요.")
+        self._show_error(
+            f"{action}을 시작하지 못했습니다. ffmpeg 설치 상태를 확인해 주세요."
+        )
 
     def _toggle_playback(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
