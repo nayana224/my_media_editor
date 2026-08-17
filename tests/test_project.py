@@ -33,6 +33,17 @@ class MediaProjectTest(unittest.TestCase):
             self.assertEqual(added, [])
             self.assertEqual(len(project.assets), 1)
 
+    def test_removes_asset_from_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "video.mp4"
+            video.touch()
+
+            project = MediaProject()
+            asset = project.add_paths([video])[0]
+            project.remove(asset)
+
+            self.assertEqual(project.assets, [])
+
 
 if __name__ == "__main__":
     unittest.main()
