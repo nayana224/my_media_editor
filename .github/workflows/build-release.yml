@@ -65,7 +65,22 @@ jobs:
 
       - name: Build Windows portable package
         shell: pwsh
-        run: ./scripts/build_windows.ps1
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installPath) {
+            throw "Visual Studio C++ toolchain을 찾지 못했습니다."
+          }
+
+          $devCmd = Join-Path $installPath "Common7\Tools\VsDevCmd.bat"
+          cmd.exe /d /s /c "`"$devCmd`" -no_logo -arch=x64 && powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_windows.ps1"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
