@@ -15,9 +15,11 @@ Windows x64
      └─ MyMediaEditor.exe
 ```
 
-Python과 PySide6를 사용자 PC에 별도로 설치할 필요가 없도록 Qt 공식 `pyside6-deploy`로 standalone executable을 생성합니다.
+Python과 PySide6를 사용자 PC에 별도로 설치할 필요가 없도록 Nuitka + PySide6 plugin 기반 standalone executable을 생성합니다.
 
-Linux standalone executable은 AppDir에 넣은 뒤 `linuxdeploy`로 AppImage를 생성합니다.
+Linux는 Qt 공식 `pyside6-deploy`를 통해 Nuitka onefile executable을 만든 뒤 AppDir에 넣고 `linuxdeploy`로 AppImage를 생성합니다.
+
+Windows는 CI의 비대화형 환경에서 Dependency Walker 다운로드 승인이 막히지 않도록 Nuitka를 직접 실행하고 `--assume-yes-for-downloads`를 명시합니다.
 
 ## FFmpeg 정책
 
@@ -116,7 +118,7 @@ Nuitka의 `zstandard` 미설치 경고는 onefile 압축 최적화 관련 경고
 - Windows x64
 - Python 3.10+
 - PowerShell
-- Visual Studio C++ build tools (`dumpbin` 사용 가능 환경)
+- Visual Studio C++ build tools
 
 PowerShell에서:
 
@@ -124,6 +126,8 @@ PowerShell에서:
 cd C:\path\to\my_media_editor
 .\scripts\build_windows.ps1
 ```
+
+Windows build script는 별도 virtual environment를 만들고 `Nuitka[onefile]`을 설치한 뒤 PySide6 plugin을 활성화하여 `MyMediaEditor.exe`를 생성합니다. Dependency Walker 같은 Nuitka 보조 도구는 CI에서도 자동 승인해 다운로드하도록 설정합니다.
 
 결과:
 
@@ -145,7 +149,7 @@ windows-2025
   → Windows portable ZIP
 ```
 
-Linux runner에서는 build 전에 `patchelf`와 `curl`을 apt로 설치합니다.
+Linux runner에서는 build 전에 `patchelf`, `curl`과 PySide6 QtGui import에 필요한 `libegl1`, `libgl1`을 apt로 설치합니다.
 
 수동 build:
 
@@ -175,11 +179,19 @@ GitHub Releases / v0.1.0
 
 ## Build implementation
 
-Standalone executable:
+Linux standalone executable:
 
 ```text
 pyside6-deploy
-  └─ Nuitka
+  └─ Nuitka onefile
+```
+
+Windows standalone executable:
+
+```text
+Nuitka[onefile]
+  + PySide6 plugin
+  + --assume-yes-for-downloads
 ```
 
 Linux AppImage:
@@ -194,7 +206,7 @@ linuxdeploy
 AppImage
 ```
 
-Qt Multimedia 모듈 누락을 방지하기 위해 deployment 명령에서 `Multimedia,MultimediaWidgets`를 명시적으로 포함합니다.
+Qt Multimedia plugin 누락을 방지하기 위해 Linux / Windows 모두 multimedia 관련 Qt plugin을 명시적으로 포함합니다.
 
 ## Validation
 
@@ -213,7 +225,7 @@ release 전 최소 확인 항목:
 
 ## 남은 packaging 작업
 
-1. Ubuntu AppImage 실제 clean-machine smoke test
+1. Ubuntu AppImage clean-machine smoke test
 2. Windows 10 / 11 portable smoke test
 3. FFmpeg / FFprobe bundle의 license 조건 확정
 4. FFmpeg bundle 적용
