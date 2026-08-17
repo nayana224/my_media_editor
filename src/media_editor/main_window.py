@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QProcess, QUrl, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -8,31 +8,42 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QSlider,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
-from media_editor.media import MediaKind, classify_media, format_duration
+from media_editor.ffmpeg import build_upscale_command, make_upscale_output_path
+from media_editor.media import MediaKind, format_duration
+from media_editor.project import MediaAsset, MediaProject
 from media_editor.widgets import DropPreviewWidget
 
 
+ASSET_ROLE = Qt.ItemDataRole.UserRole
+
+
 class MainWindow(QMainWindow):
-    """이미지와 영상을 preview하는 Media Editor 주 창."""
+    """Media library와 preview를 제공하는 Media Editor 주 창."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Media Editor")
-        self.resize(1100, 760)
-        self.setMinimumSize(820, 620)
+        self.resize(1180, 780)
+        self.setMinimumSize(900, 640)
 
-        self.current_path: Path | None = None
-        self.current_kind: MediaKind | None = None
+        self.project = MediaProject()
+        self.current_asset: MediaAsset | None = None
         self._slider_is_pressed = False
+        self._upscale_process: QProcess | None = None
+        self._upscale_output_path: Path | None = None
 
         self.audio_output = QAudioOutput(self)
         self.player = QMediaPlayer(self)
@@ -43,6 +54,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_player()
         self._update_playback_controls(False)
+        self._update_media_tools(False)
 
     def _build_ui(self) -> None:
         open_action = QAction("Open", self)
@@ -59,40 +71,62 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(18)
 
         header_layout = QHBoxLayout()
-
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
 
         title = QLabel("Media Editor")
         title.setObjectName("appTitle")
-        subtitle = QLabel("빠르게 열고, 확인하고, 편집할 수 있는 데스크톱 미디어 도구")
+        subtitle = QLabel("이미지와 영상을 하나의 project에서 편집하고 변환합니다")
         subtitle.setObjectName("appSubtitle")
-
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
 
-        open_button = QPushButton("Open Media")
+        open_button = QPushButton("Import Media")
         open_button.setObjectName("primaryButton")
         open_button.clicked.connect(self._open_file_dialog)
 
         header_layout.addLayout(title_box)
         header_layout.addStretch()
         header_layout.addWidget(open_button)
-
         main_layout.addLayout(header_layout)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        library_card = QFrame()
+        library_card.setObjectName("libraryCard")
+        library_layout = QVBoxLayout(library_card)
+        library_layout.setContentsMargins(14, 14, 14, 14)
+
+        library_title = QLabel("MEDIA")
+        library_title.setObjectName("sectionTitle")
+        self.media_list = QListWidget()
+        self.media_list.setObjectName("mediaList")
+        self.media_list.currentItemChanged.connect(self._on_library_selection_changed)
+
+        library_layout.addWidget(library_title)
+        library_layout.addWidget(self.media_list)
+        splitter.addWidget(library_card)
+
+        preview_container = QWidget()
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(10)
+
         self.preview = DropPreviewWidget()
-        self.preview.file_dropped.connect(self._load_media)
+        self.preview.files_dropped.connect(self._import_paths)
         self.preview.open_requested.connect(self._open_file_dialog)
         self.preview.set_video_widget(self.video_widget)
-        main_layout.addWidget(self.preview, stretch=1)
 
-        self.file_info = QLabel("파일을 열거나 preview 영역에 드래그 앤 드롭하세요.")
+        self.file_info = QLabel("파일을 import하거나 preview 영역에 드래그 앤 드롭하세요.")
         self.file_info.setObjectName("fileInfo")
-        self.file_info.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        main_layout.addWidget(self.file_info)
+        self.file_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        preview_layout.addWidget(self.preview, stretch=1)
+        preview_layout.addWidget(self.file_info)
+        splitter.addWidget(preview_container)
+        splitter.setSizes([230, 850])
+
+        main_layout.addWidget(splitter, stretch=1)
 
         playback_card = QFrame()
         playback_card.setObjectName("controlCard")
@@ -113,34 +147,35 @@ class MainWindow(QMainWindow):
         timeline_layout.addWidget(self.duration_time)
 
         controls_layout = QHBoxLayout()
-
         self.play_button = QPushButton("▶  Play")
         self.play_button.setObjectName("primaryButton")
         self.play_button.clicked.connect(self._toggle_playback)
 
         self.trim_button = QPushButton("Trim")
         self.crop_button = QPushButton("Crop")
-        self.rotate_button = QPushButton("Rotate")
         self.resize_button = QPushButton("Resize")
+        self.upscale_button = QPushButton("Upscale")
         self.export_button = QPushButton("Export")
 
         for button in (
             self.trim_button,
             self.crop_button,
-            self.rotate_button,
             self.resize_button,
             self.export_button,
         ):
             button.setObjectName("toolButton")
             button.setEnabled(False)
-            button.setToolTip("다음 단계에서 구현할 편집 기능입니다.")
+            button.setToolTip("다음 개발 단계에서 구현할 기능입니다.")
+
+        self.upscale_button.setObjectName("toolButton")
+        self.upscale_button.clicked.connect(self._request_upscale)
 
         controls_layout.addWidget(self.play_button)
         controls_layout.addSpacing(8)
         controls_layout.addWidget(self.trim_button)
         controls_layout.addWidget(self.crop_button)
-        controls_layout.addWidget(self.rotate_button)
         controls_layout.addWidget(self.resize_button)
+        controls_layout.addWidget(self.upscale_button)
         controls_layout.addStretch()
         controls_layout.addWidget(self.export_button)
 
@@ -155,15 +190,13 @@ class MainWindow(QMainWindow):
     def _connect_player(self) -> None:
         self.player.positionChanged.connect(self._on_position_changed)
         self.player.durationChanged.connect(self._on_duration_changed)
-        self.player.playbackStateChanged.connect(
-            self._on_playback_state_changed
-        )
+        self.player.playbackStateChanged.connect(self._on_playback_state_changed)
         self.player.errorOccurred.connect(self._on_player_error)
 
     def _open_file_dialog(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(
+        filenames, _ = QFileDialog.getOpenFileNames(
             self,
-            "Open Media",
+            "Import Media",
             "",
             (
                 "Supported Media (*.png *.jpg *.jpeg *.webm *.mp4);;"
@@ -171,29 +204,58 @@ class MainWindow(QMainWindow):
                 "Videos (*.webm *.mp4)"
             ),
         )
-        if filename:
-            self._load_media(Path(filename))
+        if filenames:
+            self._import_paths([Path(filename) for filename in filenames])
 
-    def _load_media(self, path: Path) -> None:
-        if not path.is_file():
-            self._show_error(f"파일을 찾을 수 없습니다.\n\n{path}")
+    def _import_paths(self, paths: list[Path]) -> None:
+        errors: list[str] = []
+
+        for path in paths:
+            if not path.is_file():
+                errors.append(f"파일을 찾을 수 없습니다: {path}")
+                continue
+
+            try:
+                added = self.project.add_paths([path])
+            except ValueError as exc:
+                errors.append(f"{path.name}: {exc}")
+                continue
+
+            for asset in added:
+                item = QListWidgetItem(asset.path.name)
+                item.setToolTip(str(asset.path))
+                item.setData(ASSET_ROLE, asset)
+                self.media_list.addItem(item)
+
+        if self.media_list.currentItem() is None and self.media_list.count() > 0:
+            self.media_list.setCurrentRow(0)
+
+        if errors:
+            self._show_error("\n".join(errors))
+
+    def _on_library_selection_changed(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
+        del previous
+        if current is None:
             return
 
-        try:
-            kind = classify_media(path)
-        except ValueError as exc:
-            self._show_error(str(exc))
-            return
+        asset = current.data(ASSET_ROLE)
+        if isinstance(asset, MediaAsset):
+            self._load_asset(asset)
 
+    def _load_asset(self, asset: MediaAsset) -> None:
         self.player.stop()
-        self.current_path = path
-        self.current_kind = kind
-        self.file_info.setText(str(path))
+        self.current_asset = asset
+        self.file_info.setText(str(asset.path))
+        self._update_media_tools(True)
 
-        if kind is MediaKind.IMAGE:
+        if asset.kind is MediaKind.IMAGE:
             self.player.setSource(QUrl())
             try:
-                self.preview.set_image(path)
+                self.preview.set_image(asset.path)
             except ValueError as exc:
                 self._show_error(str(exc))
                 return
@@ -201,7 +263,7 @@ class MainWindow(QMainWindow):
             return
 
         self.preview.set_video_widget(self.video_widget)
-        self.player.setSource(QUrl.fromLocalFile(str(path)))
+        self.player.setSource(QUrl.fromLocalFile(str(asset.path)))
         self._update_playback_controls(True)
 
     def _update_playback_controls(self, enabled: bool) -> None:
@@ -214,17 +276,105 @@ class MainWindow(QMainWindow):
             self.duration_time.setText("00:00")
             self.play_button.setText("▶  Play")
 
+    def _update_media_tools(self, enabled: bool) -> None:
+        self.upscale_button.setEnabled(enabled)
+
+    def _request_upscale(self) -> None:
+        if self.current_asset is None or self._upscale_process is not None:
+            return
+
+        choices = ["Standard 2×", "Standard 4×", "AI Upscale (준비 중)"]
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Upscale",
+            "Upscale mode",
+            choices,
+            0,
+            False,
+        )
+        if not accepted:
+            return
+
+        if choice.startswith("AI"):
+            QMessageBox.information(
+                self,
+                "AI Upscale",
+                "AI Upscale은 다음 단계에서 Real-ESRGAN backend로 추가할 예정입니다.",
+            )
+            return
+
+        scale = 2 if "2×" in choice else 4
+        self._start_standard_upscale(scale)
+
+    def _start_standard_upscale(self, scale: int) -> None:
+        if self.current_asset is None:
+            return
+
+        output_path = make_upscale_output_path(
+            self.current_asset.path,
+            self.current_asset.kind,
+            scale,
+        )
+
+        try:
+            command = build_upscale_command(
+                self.current_asset.path,
+                output_path,
+                self.current_asset.kind,
+                scale,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+
+        process = QProcess(self)
+        process.finished.connect(self._on_upscale_finished)
+        process.errorOccurred.connect(self._on_upscale_process_error)
+        self._upscale_process = process
+        self._upscale_output_path = output_path
+        self.upscale_button.setEnabled(False)
+        self.file_info.setText(f"Upscaling... → {output_path}")
+
+        process.start(command[0], command[1:])
+
+    def _on_upscale_finished(
+        self,
+        exit_code: int,
+        exit_status: QProcess.ExitStatus,
+    ) -> None:
+        process = self._upscale_process
+        output_path = self._upscale_output_path
+        self._upscale_process = None
+        self._upscale_output_path = None
+        self.upscale_button.setEnabled(self.current_asset is not None)
+
+        if process is None or output_path is None:
+            return
+
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
+            stderr = bytes(process.readAllStandardError()).decode(errors="replace").strip()
+            self._show_error(f"Upscale에 실패했습니다.\n\n{stderr}")
+            return
+
+        self.file_info.setText(f"Upscale 완료: {output_path}")
+        self._import_paths([output_path])
+        QMessageBox.information(
+            self,
+            "Upscale 완료",
+            f"파일을 만들었습니다.\n\n{output_path}",
+        )
+
+    def _on_upscale_process_error(self, error: QProcess.ProcessError) -> None:
+        if error == QProcess.ProcessError.Crashed:
+            self._show_error("ffmpeg process가 비정상 종료되었습니다.")
+
     def _toggle_playback(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
             return
-
         self.player.play()
 
-    def _on_playback_state_changed(
-        self,
-        state: QMediaPlayer.PlaybackState,
-    ) -> None:
+    def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.play_button.setText("Ⅱ  Pause")
         else:
