@@ -142,6 +142,7 @@ class ResizeDialog(QDialog):
         self.height_spin = self._create_size_spin(source_height)
         self.keep_ratio = QCheckBox("가로세로 비율 유지")
         self.keep_ratio.setChecked(True)
+        self.keep_ratio.toggled.connect(self._reapply_current_preset)
 
         self.width_spin.valueChanged.connect(self._width_changed)
         self.height_spin.valueChanged.connect(self._height_changed)
@@ -185,10 +186,22 @@ class ResizeDialog(QDialog):
         if size is None:
             return
 
+        width, height = size
+        if self.keep_ratio.isChecked() and index != 0:
+            scale = min(
+                width / self._source_width,
+                height / self._source_height,
+            )
+            width = max(1, round(self._source_width * scale))
+            height = max(1, round(self._source_height * scale))
+
         self._syncing = True
-        self.width_spin.setValue(size[0])
-        self.height_spin.setValue(size[1])
+        self.width_spin.setValue(width)
+        self.height_spin.setValue(height)
         self._syncing = False
+
+    def _reapply_current_preset(self) -> None:
+        self._apply_preset(self.preset_combo.currentIndex())
 
     def _width_changed(self, width: int) -> None:
         if self._syncing or not self.keep_ratio.isChecked():
