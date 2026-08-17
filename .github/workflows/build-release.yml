@@ -3,6 +3,8 @@ name: Build desktop packages
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -93,6 +95,34 @@ jobs:
           name: windows-x64
           path: dist/*.zip
           if-no-files-found: error
+
+  latest-release:
+    if: github.ref == 'refs/heads/main'
+    needs:
+      - linux-appimage
+      - windows-portable
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish latest desktop packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete app-latest \
+            --repo "${GITHUB_REPOSITORY}" \
+            --cleanup-tag \
+            --yes || true
+          gh release create app-latest \
+            release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Latest desktop app" \
+            --notes "Latest successful desktop build from main."
 
   github-release:
     if: startsWith(github.ref, 'refs/tags/v')
