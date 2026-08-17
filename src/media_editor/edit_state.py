@@ -10,6 +10,7 @@ class EditState:
     rotation: int | None = None
     resize: tuple[int, int] | None = None
     upscale: int | None = None
+    speed: float | None = None
 
     @property
     def has_changes(self) -> bool:
@@ -21,6 +22,7 @@ class EditState:
                 self.rotation,
                 self.resize,
                 self.upscale,
+                self.speed,
             )
         )
 
@@ -40,6 +42,8 @@ class EditState:
             labels.append(f"Resize {width}x{height}")
         if self.upscale is not None:
             labels.append(f"Upscale {self.upscale}x")
+        if self.speed is not None:
+            labels.append(f"Speed {self.speed:.2f}x")
         return labels
 
     def clear(self) -> None:
@@ -48,3 +52,4 @@ class EditState:
         self.rotation = None
         self.resize = None
         self.upscale = None
+        self.speed = None
