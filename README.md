@@ -5,14 +5,14 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
 
 ## 편집 방식
 
-단일 미디어의 `Trim`, `Crop`, `Rotate`, `Resize`, `Upscale`은 버튼을 누를 때마다 파일을
-생성하지 않습니다. 각 편집 값은 원본 파일에 대한 **Pending edits**로 누적되고,
+단일 미디어의 `Trim`, `Crop`, `Rotate`, `Resize`, `Upscale`, `Speed`는 버튼을 누를 때마다
+파일을 생성하지 않습니다. 각 편집 값은 원본 파일에 대한 **Pending edits**로 누적되고,
 `Save As…`를 눌렀을 때 FFmpeg를 한 번만 실행하여 최종 파일을 만듭니다.
 
 적용 순서는 항상 다음과 같이 고정합니다.
 
 ```text
-Trim → Crop → Rotate → Resize → Upscale → Save
+Trim → Crop → Rotate → Resize → Upscale → Speed → Save
 ```
 
 중간 MP4/PNG 파일과 반복 재인코딩을 만들지 않으며 Media Library에서 다른 파일로 이동해도
@@ -31,13 +31,15 @@ Rotate
    ↓
 Resize
    ↓
+Speed playback
+   ↓
 메인 Preview
 ```
 
 영상은 `QMediaPlayer → QVideoSink`에서 decode frame을 받고, 화면용 `QImage`에 현재
-`EditState`를 적용하여 재생 중에도 Crop / Rotate / Resize 결과를 표시합니다. Save는 같은
-`EditState`를 FFmpeg filter chain으로 변환하므로 Preview와 최종 렌더링이 같은 편집 상태를
-공유합니다.
+`EditState`를 적용하여 재생 중에도 Crop / Rotate / Resize 결과를 표시합니다. Speed는
+`QMediaPlayer.playbackRate`에 즉시 반영됩니다. Save는 같은 `EditState`를 FFmpeg filter
+chain으로 변환하므로 Preview와 최종 렌더링이 같은 편집 상태를 공유합니다.
 
 고해상도 영상에서 Preview 때문에 메모리와 CPU 사용량이 과도해지지 않도록 화면용 frame은
 최대 크기를 제한합니다. Standard Upscale 2x / 4x는 화면의 구도나 비율을 바꾸지 않으므로
@@ -64,9 +66,10 @@ End에 도달하면 pause 후 Start로 돌아갑니다.
   - Rotate 즉시 반영
   - Resize 즉시 반영
   - Trim 구간 playback 반영
+  - Speed playback 즉시 반영
   - Upscale은 예상 출력 해상도만 유지하고 화면 구성은 동일
 - 비파괴 Pending edit workflow
-  - Trim / Crop / Rotate / Resize / Upscale 누적
+  - Trim / Crop / Rotate / Resize / Upscale / Speed 누적
   - 하단에서 Pending edits 표시
   - `Reset edits`
   - `Save As…` / `Ctrl+Shift+S`
@@ -91,6 +94,14 @@ End에 도달하면 pause 후 Start로 돌아갑니다.
   - 90° clockwise / 180° / 90° counter-clockwise
 - Standard Upscale
   - 2x / 4x Lanczos
+- Speed
+  - 0.25x ~ 4.00x slider
+  - 0.5x / 1x / 1.5x / 2x / 4x quick preset
+  - 숫자 입력으로 0.05x 단위 미세 조절
+  - slider 조작 중 메인 Preview playbackRate 즉시 반영
+  - 예상 출력 길이 표시
+  - Save 시 video PTS와 audio tempo를 함께 변경
+  - 0.25x / 4x 경계는 여러 `atempo` filter를 연결하여 처리
 - Sequence / Concat
   - WebM / MP4 append
   - drag로 순서 변경
@@ -104,6 +115,41 @@ End에 도달하면 pause 후 Start로 돌아갑니다.
 - Save 결과를 Media Library에 자동 추가
 - `Ctrl+C` (`SIGINT`) / `SIGTERM` 안전 종료
 
+## Speed UX
+
+배속 UI는 숫자만 입력하는 방식 대신 slider를 중심으로 구성합니다.
+
+```text
+0.25x ├────────────●────────────────────┤ 4.00x   [1.50x]
+
+[0.5x] [1x] [1.5x] [2x] [4x]
+
+예상 길이 00:21.47 · 원본/선택 구간 00:32.20
+```
+
+사용 흐름:
+
+1. 영상 선택
+2. `Speed`
+3. slider를 움직이며 실제 Preview 배속 확인
+4. 자주 쓰는 값은 preset 버튼으로 바로 선택
+5. 필요하면 오른쪽 숫자 입력으로 미세 조절
+6. 예상 출력 길이 확인
+7. `OK`
+8. `Pending edits: Speed 1.50x` 확인
+9. 다른 편집을 계속한 뒤 `Save As…`
+
+`1.00x`를 선택하면 Speed Pending edit은 제거되어 원본 속도로 돌아갑니다. Cancel을 누르면 dialog
+열기 전의 Preview 재생 속도로 복원됩니다.
+
+Kdenlive의 speed change가 % 입력과 pitch compensation을 제공하는 점, Qt 공식 player 예제가
+playback rate 선택 UI를 제공하는 점을 참고하되, 이 앱에서는 mouse 중심 사용성을 위해 slider와
+quick preset을 우선합니다.
+
+최종 Save에서는 video에 `setpts`를 적용하고 audio에는 FFmpeg `atempo`를 사용합니다. 높은 배속에서
+단일 `atempo`가 sample을 건너뛸 수 있다는 FFmpeg 문서의 권고를 고려하여, 2x를 넘는 배속 또는
+0.5x보다 느린 배속은 여러 `atempo`를 연결합니다.
+
 ## Save workflow
 
 예:
@@ -114,14 +160,15 @@ input.webm
   ├─ Crop: 1200 x 800
   ├─ Rotate: 90°
   ├─ Resize: 1280 x 720
-  └─ Upscale: 2x
+  ├─ Upscale: 2x
+  └─ Speed: 1.5x
 ```
 
 각 dialog에서 `OK`를 누르면 파일 대신 편집 상태가 갱신되고 메인 Preview도 새 상태로
 갱신됩니다.
 
 ```text
-Pending edits: Trim 2.000-18.500s · Crop 1200x800 · Rotate 90° · Resize 1280x720 · Upscale 2x
+Pending edits: Trim 2.000-18.500s · Crop 1200x800 · Rotate 90° · Resize 1280x720 · Upscale 2x · Speed 1.50x
 ```
 
 마지막에 `Save As…`를 누르면 기본적으로 다음 이름을 제안합니다.
@@ -137,6 +184,7 @@ Save 성공 후 결과 파일을 Media Library에 추가합니다.
 
 ```text
 QMediaPlayer
+    ├─ playbackRate → Speed Preview
     ↓
 QVideoSink
     ↓
@@ -149,6 +197,8 @@ EditState
 Save As
     ↓
 FFmpeg one-pass filter chain
+    ├─ setpts
+    └─ atempo
     ↓
 최종 MP4 / PNG
 ```
@@ -168,10 +218,12 @@ PySide6 GUI
     |       |-- Crop
     |       |-- Rotate
     |       |-- Resize
-    |       +-- Upscale
+    |       |-- Upscale
+    |       +-- Speed
     |
     +-- Live Preview
     |       |-- QMediaPlayer
+    |       |-- playbackRate
     |       |-- QVideoSink
     |       |-- QVideoFrame.toImage()
     |       +-- preview_transform.py
@@ -181,10 +233,12 @@ PySide6 GUI
     |       |-- Crop + Zoom + Pan
     |       |-- Resize
     |       |-- Rotate
-    |       +-- Upscale
+    |       |-- Upscale
+    |       +-- Speed slider / presets
     |
     +-- FFmpeg
             |-- one-pass Save pipeline
+            |-- setpts + atempo speed render
             |-- H.264 / AAC MP4
             +-- Sequence / Concat
 ```
@@ -245,6 +299,11 @@ cd ~/inpyo_ws/my_media_editor
 
 2x / 4x 출력 해상도는 Pending 상태와 최종 Save에 반영됩니다. 화면의 구도 자체는 동일하므로
 메인 Preview에서 거대한 2x / 4x frame을 만들지는 않습니다.
+
+### Speed
+
+`Speed`를 누르고 0.25x ~ 4.00x slider 또는 quick preset으로 배속을 정합니다. dialog를 연 상태에서
+slider를 움직이면 실제 player playback rate가 즉시 바뀌어 체감 속도를 확인할 수 있습니다.
 
 ### Reset edits
 
