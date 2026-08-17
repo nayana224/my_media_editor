@@ -47,13 +47,21 @@ PySide6 + FFmpeg 기반 데스크톱 앱입니다.
 - Standard Upscale 2x / 4x
   - Image: Lanczos scale 후 PNG
   - Video: Lanczos scale 후 H.264 / AAC MP4
+- Sequence / Concat
+  - project에 등록된 WebM / MP4를 Sequence dialog에서 선택
+  - `Append →` 또는 double-click으로 sequence 끝에 clip 추가
+  - sequence list에서 drag & drop으로 재생 순서 변경
+  - clip 삭제 / 전체 clear
+  - 서로 다른 해상도는 첫 clip 해상도를 기준으로 aspect ratio 유지 후 letterbox/pillarbox 정규화
+  - 오디오가 없는 clip은 같은 길이의 silence를 생성하여 sync 유지
+  - 최종 결과는 H.264 / AAC MP4로 재인코딩
 - MP4 Export
   - WebM -> MP4
   - MP4 -> H.264 / AAC MP4 재출력
 - FFmpeg video output 공통 처리
   - H.264 (`libx264`) + AAC
   - `yuv420p`
-  - timestamp passthrough (`-vsync 0`)
+  - timestamp passthrough (`-vsync 0`) for single-video transforms
   - 홀수 해상도 입력은 최대 1 px padding
 - FFmpeg 작업은 `QProcess`로 실행하여 GUI thread를 block하지 않음
 - 편집 결과를 Media Library에 자동 추가하고 결과 file을 자동 선택
@@ -100,6 +108,11 @@ PySide6 GUI
     |       |-- Rotate live preview
     |       +-- Upscale preview
     |
+    +-- Sequence
+    |       |-- Append / Remove / Clear
+    |       |-- drag reorder
+    |       +-- ffprobe metadata normalization
+    |
     +-- FFmpeg
             |-- Trim
             |-- Crop
@@ -107,7 +120,7 @@ PySide6 GUI
             |-- Rotate
             |-- MP4 Export
             |-- Standard Upscale
-            +-- future concat / compose
+            +-- Sequence / Concat
 ```
 
 FFmpeg 작업은 하나의 active job만 허용합니다. 편집이나 export 중에는 다른 FFmpeg 작업과
@@ -141,6 +154,20 @@ cd ~/inpyo_ws/my_media_editor
 ```
 
 ## 사용 흐름
+
+### Sequence / Concat
+
+1. Media Library에 WebM 또는 MP4 video를 2개 이상 추가합니다.
+2. 상단 `Sequence` 버튼을 누릅니다.
+3. 왼쪽 `MEDIA VIDEOS`에서 clip을 선택하고 `Append →`를 누르거나 double-click합니다.
+4. 오른쪽 `SEQUENCE`에서 항목을 drag하여 `A → B → C` 재생 순서를 정합니다.
+5. 필요 없는 clip은 `Remove`, 전체 초기화는 `Clear`를 사용합니다.
+6. `Export Sequence`를 누르고 출력 MP4 경로를 선택합니다.
+7. export가 완료되면 결과 MP4가 Media Library에 자동 추가됩니다.
+
+Sequence export는 첫 clip 해상도를 canvas로 사용합니다. 이후 clip의 aspect ratio가 다르면
+화면을 찌그러뜨리지 않고 canvas 안에 맞춘 뒤 남는 부분을 padding합니다. 오디오가 없는 clip은
+같은 길이의 무음 stereo track을 생성하여 이후 clip의 audio sync를 유지합니다.
 
 ### Trim
 
@@ -232,20 +259,16 @@ FFmpeg executable bundle은 라이선스와 배포 조건을 확인한 뒤 packa
 
 ## Roadmap
 
-1. Sequence / Concat
-   - Media Library에서 여러 video 선택
-   - drag로 순서 변경
-   - `Append at End`
-   - clip 경계 snap
-2. Timeline usability
+1. Timeline usability
    - 좌/우 화살표 frame step
+   - clip 경계 snap
    - marker
    - Fit Zoom
    - 전체 sequence + 작업 구간을 함께 보는 compact dual-view
-3. Side-by-side / Top-bottom / 2x2 Grid layout compose
-4. Export progress / cancel
-5. 고해상도 source용 proxy preview
-6. AI Upscale
-7. Windows / Ubuntu packaging 및 GitHub Release 자동화
+2. Side-by-side / Top-bottom / 2x2 Grid layout compose
+3. Export progress / cancel
+4. 고해상도 source용 proxy preview
+5. AI Upscale
+6. Windows / Ubuntu packaging 및 GitHub Release 자동화
 
 기능 추가 시 README의 현재 구현 범위, 사용법, architecture와 roadmap도 함께 갱신합니다.
