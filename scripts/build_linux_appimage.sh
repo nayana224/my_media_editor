@@ -26,6 +26,7 @@ for command in python3 curl patchelf; do
 done
 
 rm -rf "${BUILD_ROOT}" "${DEPLOYMENT_ROOT}"
+rm -f "${PROJECT_ROOT}/MyMediaEditor.bin" "${PROJECT_ROOT}/deploy_main.bin"
 mkdir -p "${BUILD_ROOT}" "${DIST_ROOT}"
 
 python3 -m venv "${VENV}"
@@ -40,21 +41,36 @@ pushd "${PROJECT_ROOT}" >/dev/null
   --force
 popd >/dev/null
 
-STANDALONE_BIN="$(
-  find "${DEPLOYMENT_ROOT}" -maxdepth 2 -type f \
-    \( -name 'MyMediaEditor.bin' -o -name 'deploy_main.bin' -o -name 'MyMediaEditor' -o -name 'deploy_main' \) \
-    -perm -u+x \
-    -print -quit
-)"
+STANDALONE_BIN=""
+for candidate in \
+  "${PROJECT_ROOT}/MyMediaEditor.bin" \
+  "${PROJECT_ROOT}/deploy_main.bin" \
+  "${DEPLOYMENT_ROOT}/MyMediaEditor.bin" \
+  "${DEPLOYMENT_ROOT}/deploy_main.bin" \
+  "${DEPLOYMENT_ROOT}/MyMediaEditor" \
+  "${DEPLOYMENT_ROOT}/deploy_main"; do
+  if [[ -f "${candidate}" && -x "${candidate}" ]]; then
+    STANDALONE_BIN="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${STANDALONE_BIN}" && -d "${DEPLOYMENT_ROOT}" ]]; then
+  STANDALONE_BIN="$(
+    find "${DEPLOYMENT_ROOT}" -maxdepth 2 -type f -perm -u+x -print -quit
+  )"
+fi
 
 if [[ -z "${STANDALONE_BIN}" ]]; then
   echo "pyside6-deploy 결과 실행 파일을 찾지 못했습니다." >&2
-  echo "확인 경로: ${DEPLOYMENT_ROOT}" >&2
-  if [[ -d "${DEPLOYMENT_ROOT}" ]]; then
-    find "${DEPLOYMENT_ROOT}" -maxdepth 2 -type f -print >&2 || true
-  fi
+  echo "확인한 대표 경로:" >&2
+  echo "  ${PROJECT_ROOT}/MyMediaEditor.bin" >&2
+  echo "  ${PROJECT_ROOT}/deploy_main.bin" >&2
+  echo "  ${DEPLOYMENT_ROOT}/" >&2
   exit 1
 fi
+
+echo "Standalone executable: ${STANDALONE_BIN}"
 
 mkdir -p "${APPDIR}/usr/bin"
 install -m 0755 "${STANDALONE_BIN}" "${APPDIR}/usr/bin/MyMediaEditor"
