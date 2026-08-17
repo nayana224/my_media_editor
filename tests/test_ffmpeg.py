@@ -28,8 +28,12 @@ class BuildUpscaleCommandTest(unittest.TestCase):
             2,
         )
 
-        self.assertIn("scale=iw*2:ih*2:flags=lanczos", command)
-        self.assertIn("pad=ceil(iw/2)*2:ceil(ih/2)*2", command)
+        filter_value = command[command.index("-vf") + 1]
+        self.assertEqual(
+            filter_value,
+            "scale=iw*2:ih*2:flags=lanczos,"
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        )
         self.assertIn("libx264", command)
         self.assertIn("aac", command)
 
