@@ -10,7 +10,7 @@ def _configure_qt_multimedia_logging() -> None:
     os.environ["QT_LOGGING_RULES"] = (
         f"{existing_rules};{quiet_rules}" if existing_rules else quiet_rules
     )
-    os.environ.setdefault("QT_FFMPEG_DEBUG", "0")
+    os.environ["QT_FFMPEG_DEBUG"] = "0"
 
 
 def main() -> None:
