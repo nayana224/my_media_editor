@@ -7,3 +7,6 @@ dist/
 *.egg-info/
 .idea/
 .vscode/
+pysidedeploy.spec
+MyMediaEditor.bin
+MyMediaEditor.exe
