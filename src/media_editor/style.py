@@ -18,21 +18,53 @@ QLabel#appSubtitle {
     font-size: 13px;
 }
 
+QLabel#sectionTitle {
+    color: #8f96a3;
+    font-size: 11px;
+    font-weight: 700;
+    padding-bottom: 4px;
+}
+
 QLabel#fileInfo {
     color: #a9b0bd;
     font-size: 12px;
     padding-left: 2px;
 }
 
-QFrame#previewCard {
+QFrame#libraryCard,
+QFrame#previewCard,
+QFrame#controlCard {
     background: #171a20;
     border: 1px solid #2a2f39;
-    border-radius: 14px;
+    border-radius: 12px;
+}
+
+QListWidget#mediaList {
+    background: #12151a;
+    color: #dce1e9;
+    border: 0;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QListWidget#mediaList::item {
+    min-height: 34px;
+    padding: 0 8px;
+    border-radius: 6px;
+}
+
+QListWidget#mediaList::item:hover {
+    background: #20242c;
+}
+
+QListWidget#mediaList::item:selected {
+    background: #2b355d;
+    color: #ffffff;
 }
 
 QLabel#imagePreview {
     background: #0c0e12;
-    border-radius: 14px;
+    border-radius: 12px;
 }
 
 QLabel#dropIcon {
@@ -49,12 +81,6 @@ QLabel#dropTitle {
 QLabel#dropDescription {
     color: #808895;
     font-size: 12px;
-}
-
-QFrame#controlCard {
-    background: #171a20;
-    border: 1px solid #2a2f39;
-    border-radius: 12px;
 }
 
 QPushButton {
