@@ -63,6 +63,23 @@ ffprobe -version
 - Python 3.10+
 - `python3-venv`
 - `curl`
+- `patchelf`
+
+`pyside6-deploy`가 Linux에서 사용하는 Nuitka standalone build는 system `patchelf` command가 필요합니다. Python package 형태의 `patchelf`만 설치되어 있어서는 충분하지 않습니다.
+
+설치:
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv curl patchelf
+```
+
+확인:
+
+```bash
+patchelf --version
+curl --version
+```
 
 실행:
 
@@ -70,6 +87,8 @@ ffprobe -version
 cd ~/inpyo_ws/my_media_editor
 bash scripts/build_linux_appimage.sh
 ```
+
+build script는 시작 시 `python3`, `curl`, `patchelf`를 확인하고 누락된 필수 command가 있으면 실제 build 전에 종료합니다.
 
 결과:
 
@@ -86,6 +105,8 @@ chmod +x dist/MyMediaEditor-0.1.0-x86_64.AppImage
 
 build script는 별도 `build/package-linux/venv`를 생성하므로 개발용 `.venv`를 수정하지 않습니다.
 
+`pyside6-deploy` 출력 이름은 Qt/PySide 버전에 따라 entry script 이름을 따를 수 있으므로 build script는 `MyMediaEditor.bin` 하나를 하드코딩하지 않고 `deployment/`에서 실제 생성된 executable을 탐색합니다.
+
 ## Windows local build
 
 전제 조건:
@@ -93,6 +114,7 @@ build script는 별도 `build/package-linux/venv`를 생성하므로 개발용 `
 - Windows x64
 - Python 3.10+
 - PowerShell
+- Visual Studio C++ build tools (`dumpbin` 사용 가능 환경)
 
 PowerShell에서:
 
@@ -120,6 +142,8 @@ ubuntu-22.04
 windows-2025
   → Windows portable ZIP
 ```
+
+Linux runner에서는 build 전에 `patchelf`와 `curl`을 apt로 설치합니다.
 
 수동 build:
 
