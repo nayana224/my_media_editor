@@ -22,13 +22,23 @@ def configure_runtime_path() -> None:
 
 
 def find_runtime_tool(name: str) -> str:
-    """배포 bundle과 PATH에서 외부 실행 파일을 찾는다."""
+    """배포 bundle, Python package, PATH 순서로 외부 실행 파일을 찾는다."""
     executable_name = f"{name}.exe" if sys.platform == "win32" else name
 
     for directory in _runtime_tool_directories():
         candidate = directory / executable_name
         if candidate.is_file():
             return str(candidate)
+
+    if name == "ffmpeg":
+        try:
+            from imageio_ffmpeg import get_ffmpeg_exe
+
+            packaged_ffmpeg = Path(get_ffmpeg_exe())
+            if packaged_ffmpeg.is_file():
+                return str(packaged_ffmpeg)
+        except (ImportError, RuntimeError):
+            pass
 
     path = shutil.which(executable_name)
     if path is not None:
