@@ -77,6 +77,7 @@ for library in "${QT_RUNTIME_LIBRARIES[@]}"; do
 done
 OUTPUT="${OUTPUT}" APPIMAGE_EXTRACT_AND_RUN=1 "${LINUXDEPLOY}" \
   --appdir "${APPDIR}" \
+  --custom-apprun "${PROJECT_ROOT}/packaging/linux/AppRun" \
   "${LIBRARY_ARGS[@]}" \
   --executable "${APPDIR}/usr/bin/MyMediaEditor" \
   --executable "${APPDIR}/usr/bin/ffmpeg" \

@@ -72,6 +72,8 @@ bash scripts/build_linux_appimage.sh
 FFmpeg와 FFprobe, Qt X11의 xcb-cursor 등 런타임 라이브러리를 추가한 뒤 linuxdeploy로 AppImage를 만듭니다.
 Qt 라이브러리는 onefile 내부에 있어 linuxdeploy의 자동 검색만으로 찾을 수 없으므로 외부 의존성을 명시합니다.
 Ubuntu 사용자가 `libxcb-cursor0`를 별도로 설치하도록 요구하지 않습니다.
+전용 `AppRun`은 AppImage 내부 라이브러리 경로를 Nuitka 자식 프로세스에도 전달해
+임시 디렉터리에 풀린 Qt 플러그인이 동봉 라이브러리를 찾게 합니다.
 
 ```bash
 chmod +x dist/MyMediaEditor-0.1.1-x86_64.AppImage

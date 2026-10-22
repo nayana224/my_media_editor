@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+APPDIR="${APPDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# Qt is unpacked by Nuitka into a temporary directory. The outer executable's
+# RPATH alone cannot make AppDir libraries visible to Qt's plugin loader.
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+exec "${APPDIR}/usr/bin/MyMediaEditor" "$@"
