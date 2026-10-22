@@ -14,6 +14,19 @@ if [[ "$(uname -m)" != "x86_64" ]]; then
   echo "Linux x86_64만 지원합니다." >&2
   exit 1
 fi
+# Keep the release ABI floor at Ubuntu 22.04 (glibc 2.35).
+# Building the same code on 24.04 would silently raise that floor.
+if [[ ! -r /etc/os-release ]]; then
+  echo "배포 빌드는 Ubuntu 22.04 x86_64에서 실행해 주세요." >&2
+  exit 1
+fi
+. /etc/os-release
+if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "22.04" ]]; then
+  echo "배포 빌드는 Ubuntu 22.04 x86_64 전용입니다. 현재 OS: ${PRETTY_NAME:-unknown}" >&2
+  echo "Ubuntu 24 이상에서는 CI에서 만든 AppImage를 받아 실행하거나 Ubuntu 22.04 VM에서 빌드하세요." >&2
+  exit 1
+fi
+
 for command in python3 curl patchelf gcc; do
   command -v "${command}" >/dev/null || { echo "필수 command: ${command}" >&2; exit 1; }
 done
@@ -49,8 +62,22 @@ chmod +x "${LINUXDEPLOY}"
 VERSION="$("${VENV}/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("media-editor"))')"
 OUTPUT="${DIST_ROOT}/MyMediaEditor-${VERSION}-x86_64.AppImage"
 rm -f "${OUTPUT}"
+# Qt is inside Nuitka's onefile payload, so linuxdeploy cannot discover
+# its optional X11 dependencies by scanning the outer executable.
+QT_RUNTIME_LIBRARIES=(
+  libxcb-cursor.so.0 libxkbcommon-x11.so.0 libxcb-icccm.so.4
+  libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-render-util.so.0
+  libxcb-xinerama.so.0 libxcb-xkb.so.1 libxcb-randr.so.0
+)
+LIBRARY_ARGS=()
+for library in "${QT_RUNTIME_LIBRARIES[@]}"; do
+  path="/usr/lib/x86_64-linux-gnu/${library}"
+  [[ -f "${path}" ]] || { echo "빌드에 필요한 Qt library가 없습니다: ${path}" >&2; exit 1; }
+  LIBRARY_ARGS+=(--library "${path}")
+done
 OUTPUT="${OUTPUT}" APPIMAGE_EXTRACT_AND_RUN=1 "${LINUXDEPLOY}" \
   --appdir "${APPDIR}" \
+  "${LIBRARY_ARGS[@]}" \
   --executable "${APPDIR}/usr/bin/MyMediaEditor" \
   --executable "${APPDIR}/usr/bin/ffmpeg" \
   --executable "${APPDIR}/usr/bin/ffprobe" \

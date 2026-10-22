@@ -2,6 +2,10 @@
 
 ## 0.1.1
 
+- Ubuntu 22.04를 배포 빌드 기준으로 제한하고, 같은 AppImage의 22.04/24.04/26.04 호환성 검사 추가.
+- Qt X11용 xcb-cursor와 관련 라이브러리 동봉, 실제 X11 자동 진단 추가.
+- Ubuntu 24용 수동 확인 가이드 추가.
+
 - Linux/Windows에 SHA256으로 고정한 FFmpeg와 FFprobe 동봉.
 - Nuitka/PySide6 빌드 버전과 onefile 출력 경로 고정.
 - Windows 빌드 오류 처리와 Python 3.11+ 사전 검사.

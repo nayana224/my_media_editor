@@ -34,7 +34,9 @@ jobs:
       - name: Install Linux packaging dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y patchelf curl libegl1 libgl1 libpulse0
+          sudo apt-get install -y patchelf curl libegl1 libgl1 libpulse0 \
+            libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxcb-randr0
 
       - name: Install test dependencies
         run: |
@@ -70,6 +72,56 @@ jobs:
           name: linux-x86_64
           path: dist/*.AppImage
           if-no-files-found: error
+
+  linux-compatibility:
+    name: Ubuntu ${{ matrix.os }} compatibility
+    needs: linux-appimage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    steps:
+      # Download the exact 22.04 build. Never rebuild on the newer runner.
+      - name: Download Ubuntu 22.04 AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: package
+
+      - name: Install desktop runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libpulse0 libfontconfig1 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-randr0 \
+            fonts-dejavu-core xvfb xauth
+
+      - name: Check the same package offscreen and over X11
+        timeout-minutes: 8
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          app=$(find "$PWD/package" -maxdepth 1 -name '*.AppImage' -print -quit)
+          chmod +x "$app"
+          sha256sum "$app" | tee package-sha256.txt
+          "$app" --appimage-extract > /dev/null
+          test -e squashfs-root/usr/lib/libxcb-cursor.so.0
+          rm -rf squashfs-root
+          QT_QPA_PLATFORM=offscreen timeout 180 "$app" --self-test --self-test-report "$PWD/offscreen-check.json"
+          xvfb-run -a env QT_QPA_PLATFORM=xcb timeout 180 "$app" --self-test --self-test-report "$PWD/x11-check.json"
+
+      - name: Upload compatibility diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-${{ matrix.os }}
+          path: |
+            package-sha256.txt
+            offscreen-check.json
+            x11-check.json
+          if-no-files-found: warn
 
   windows-portable:
     runs-on: windows-2025
@@ -155,6 +207,7 @@ jobs:
       contents: write
     needs:
       - linux-appimage
+      - linux-compatibility
       - windows-portable
     runs-on: ubuntu-22.04
     steps:
@@ -186,6 +239,7 @@ jobs:
       contents: write
     needs:
       - linux-appimage
+      - linux-compatibility
       - windows-portable
     runs-on: ubuntu-22.04
     steps:

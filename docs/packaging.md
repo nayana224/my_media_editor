@@ -7,11 +7,14 @@ v0.1.1부터 다음 배포 파일에 Python, PySide6, FFmpeg와 FFprobe를 포�
 
 | 대상 | 파일 | 실행 |
 | --- | --- | --- |
-| Ubuntu 22.04 / 24.04 x86_64 | `MyMediaEditor-0.1.1-x86_64.AppImage` | 실행 권한을 주고 실행 |
+| Ubuntu Desktop 22.04 이상 x86_64 | `MyMediaEditor-0.1.1-x86_64.AppImage` | 실행 권한을 주고 실행 |
 | Windows 10 22H2 / Windows 11 x64 | `MyMediaEditor-0.1.1-windows-x64.zip` | 전체 압축을 풀고 `MyMediaEditor.exe` 실행 |
 
-이 표는 지원 목표입니다. CI의 실제 검증 환경은 Ubuntu 22.04와 Windows Server 2025입니다.
-Ubuntu 24.04, X11/Wayland, Windows 10/11의 실제 데스크톱 검증은 공개 배포 전에 별도로 수행합니다.
+Ubuntu 최소 기준은 22.04 (glibc 2.35)입니다. 배포용 AppImage는 Ubuntu 22.04에서 한 번만 빌드하고,
+그 동일 파일을 Ubuntu 22.04/24.04/26.04에서 offscreen 및 X11(Xvfb)로 검증합니다.
+새 Ubuntu 버전이 추가될 때도 같은 파일을 검증 대상에 추가합니다.
+미출시 버전이나 모든 데스크톱·GPU 조합의 무조건적인 동작을 보증하는 의미는 아닙니다.
+Windows CI는 Server 2025입니다. 실제 Wayland, Windows 10/11의 수동 검증은 별도로 수행합니다.
 ARM64, 32비트 Windows, 다른 Linux 배포판의 호환성은 보장하지 않습니다.
 
 Windows에서는 EXE와 함께 `bin/` 및 `third-party/`를 유지합니다.
@@ -49,19 +52,26 @@ FFprobe도 같은 검색 함수를 사용합니다.
 
 ## Linux local build
 
-Ubuntu x86_64, Python 3.11 이상, C compiler, venv, curl, patchelf가 필요합니다.
+배포용 빌드에는 Ubuntu **22.04 x86_64**, Python 3.11 이상, C compiler, venv, curl, patchelf가 필요합니다.
+스크립트는 다른 Ubuntu 버전에서 실행되면 빌드 전에 종료합니다. 특히 Ubuntu 24에서 로컬로 만든
+파일을 22.04 이상 호환 배포본으로 사용하지 않습니다.
+Ubuntu 24에서는 CI AppImage를 다운로드해 실행하거나 Ubuntu 22.04 VM에서 빌드하세요.
 Ubuntu 22.04 기본 Python은 3.10이므로 Python 3.11 이상을 별도로 준비합니다.
 CI에서는 Python 3.11을 사용합니다.
 
 ```bash
-sudo apt install -y build-essential python3-venv curl patchelf libegl1 libgl1 libpulse0
+sudo apt install -y build-essential python3-venv curl patchelf libegl1 libgl1 libpulse0 \
+  libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+  libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxcb-randr0
 bash scripts/build_linux_appimage.sh
 ```
 
 빌드는 전용 `build/package-linux/venv`를 만들고, Nuitka `--onefile`을 명시해
 `build/package-linux/deployment/MyMediaEditor.bin`을 생성합니다.
 결과 파일을 정확한 경로에서 확인하며 `.dist` 폴더의 임의 실행 파일을 선택하지 않습니다.
-FFmpeg와 FFprobe를 추가한 뒤 linuxdeploy로 AppImage를 만듭니다.
+FFmpeg와 FFprobe, Qt X11의 xcb-cursor 등 런타임 라이브러리를 추가한 뒤 linuxdeploy로 AppImage를 만듭니다.
+Qt 라이브러리는 onefile 내부에 있어 linuxdeploy의 자동 검색만으로 찾을 수 없으므로 외부 의존성을 명시합니다.
+Ubuntu 사용자가 `libxcb-cursor0`를 별도로 설치하도록 요구하지 않습니다.
 
 ```bash
 chmod +x dist/MyMediaEditor-0.1.1-x86_64.AppImage
@@ -101,7 +111,7 @@ if ($LASTEXITCODE -ne 0) { throw "Package self-test failed" }
 - 공백·한글 경로
 
 진단 중 PATH는 비워집니다. 진단의 변환 명령에는 실행 제한 시간이 있고, CI는 전체 진단을
-3분으로 제한합니다. 실제 사용자 GUI 조작, 오디오 장치 출력, GPU별 동작, X11/Wayland는
+3분으로 제한합니다. X11 검증은 가상 디스플레이를 사용합니다. 실제 사용자 GUI 조작, 오디오 장치 출력, GPU별 동작, X11/Wayland는
 자동 진단만으로 검증되지 않습니다.
 
 ## GitHub Actions / Release
@@ -110,11 +120,12 @@ main push, `v*` tag push, main 대상 PR, 수동 실행에서 OS별 테스트·�
 PR은 배포하지 않습니다. 빌드 작업은 읽기 권한만 사용합니다.
 
 - Linux: 완성 AppImage 자체의 진단
+- Ubuntu 호환성: 22.04에서 만든 같은 AppImage를 22.04/24.04/26.04에서 offscreen + X11 진단
 - Windows: ZIP을 별도 한글·공백 경로에 푼 뒤 EXE 자체의 진단
 - 진단을 통과한 경우에만 OS별 package artifact 업로드
 - 실패 시 가능한 JSON 진단 결과 별도 업로드
-- main: 양쪽 성공 후 `app-latest` 갱신
-- `v*` tag: 양쪽 성공 후 해당 GitHub Release 생성
+- main: 두 OS 빌드 및 모든 Ubuntu 호환성 검사 성공 후 `app-latest` 갱신
+- `v*` tag: 두 OS 빌드 및 모든 Ubuntu 호환성 검사 성공 후 해당 GitHub Release 생성
 
 같은 ref의 중복 실행은 취소합니다. 안정 버전의 tag는 해당 `pyproject.toml` 버전과 맞춰 사용합니다.
 수동 workflow 실행 또는 PR의 Actions 결과에서 시험 빌드 파일을 받을 수 있습니다.
@@ -137,3 +148,10 @@ FFmpeg GPL variant를 사용하며 `libx264` 인코더가 포함됩니다.
 - 읽기 전용 설치 위치, 공백·한글 사용자 폴더에서 실행
 - 제3자 라이선스와 대응 소스 제공 준비
 - Windows installer 및 코드 서명은 별도 후속 작업
+
+## Ubuntu 24에서 수동 확인
+
+[수동 확인 가이드](manual-validation.md)의 순서대로 진행합니다.
+중요한 점은 소스 실행이나 Ubuntu 24 로컬 빌드 대신 **Ubuntu 22.04 CI에서 만든 AppImage**로
+확인하는 것입니다. 개발 PC에 설치된 Python/FFmpeg가 있어도 AppImage 자체 진단은 PATH를
+비우고 동봉 도구를 검사합니다.
