@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import shutil
 import subprocess
 
 from media_editor.ffmpeg import find_ffmpeg
+from media_editor.runtime_tools import find_runtime_tool
 
 
 @dataclass(frozen=True)
@@ -16,13 +16,8 @@ class VideoProbe:
 
 
 def find_ffprobe() -> str:
-    """PATH에서 ffprobe 실행 파일을 찾는다."""
-    ffprobe_path = shutil.which("ffprobe")
-    if ffprobe_path is None:
-        raise FileNotFoundError(
-            "ffprobe를 찾을 수 없습니다. FFmpeg 설치 상태를 확인해 주세요."
-        )
-    return ffprobe_path
+    """FFmpeg와 동일한 배포 경로에서 ffprobe를 찾는다."""
+    return find_runtime_tool("ffprobe")
 
 
 def probe_video(path: Path) -> VideoProbe:

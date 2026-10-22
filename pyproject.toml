@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "media-editor"
-version = "0.1.0"
+version = "0.1.1"
 description = "A lightweight desktop image and video editor for Ubuntu and Windows"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "PySide6>=6.8,<7",
-  "imageio-ffmpeg>=0.6,<0.7",
+  "PySide6==6.11.1",
+  "imageio-ffmpeg==0.6.0",
 ]
 
 [project.scripts]

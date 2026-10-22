@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- Linux/Windows에 SHA256으로 고정한 FFmpeg와 FFprobe 동봉.
+- Nuitka/PySide6 빌드 버전과 onefile 출력 경로 고정.
+- Windows 빌드 오류 처리와 Python 3.11+ 사전 검사.
+- Nuitka onefile의 원본 EXE 옆 도구 검색 및 FFprobe 공통 경로 처리.
+- 완성 AppImage/추출 ZIP의 실제 GUI·미디어 자체 진단을 CI 배포 조건으로 추가.
+- 공급자 고지·빌드 정보 동봉 및 배포 안내 갱신.
+
+
 ## v0.1.0
 
 첫 desktop release 준비 버전입니다.

@@ -1,4 +1,5 @@
 import os
+import sys
 
 from media_editor.runtime_tools import configure_runtime_path
 
@@ -17,6 +18,11 @@ def main() -> None:
     """배포 환경을 준비한 뒤 GUI application을 시작한다."""
     configure_runtime_path()
     _configure_qt_multimedia_logging()
+
+    if "--self-test" in sys.argv[1:]:
+        from media_editor.package_check import main as check_main
+
+        raise SystemExit(check_main())
 
     from media_editor.app import main as app_main
 

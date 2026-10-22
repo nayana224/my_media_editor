@@ -21,7 +21,7 @@ def configure_runtime_path() -> None:
     )
 
 
-def find_runtime_tool(name: str) -> str:
+def find_runtime_tool(name: str, *, bundled_only: bool = False) -> str:
     """배포 bundle, Python package, PATH 순서로 외부 실행 파일을 찾는다."""
     executable_name = f"{name}.exe" if sys.platform == "win32" else name
 
@@ -29,6 +29,9 @@ def find_runtime_tool(name: str) -> str:
         candidate = directory / executable_name
         if candidate.is_file():
             return str(candidate)
+
+    if bundled_only:
+        raise FileNotFoundError(f"배포 패키지에 {name}가 없습니다.")
 
     if name == "ffmpeg":
         try:
@@ -57,6 +60,15 @@ def _runtime_tool_directories() -> list[Path]:
     appdir = os.environ.get("APPDIR")
     if appdir:
         directories.append(Path(appdir) / "usr" / "bin")
+
+    # Nuitka onefile extracts sys.executable into a temporary directory.
+    # containing_dir identifies the original executable's directory.
+    try:
+        bundle_dir = Path(__compiled__.containing_dir)  # type: ignore[name-defined]
+    except NameError:
+        bundle_dir = None
+    if bundle_dir is not None:
+        directories.extend([bundle_dir / "bin", bundle_dir])
 
     executable_dir = Path(sys.executable).resolve().parent
     directories.extend(

@@ -1,233 +1,139 @@
 # Packaging and Release
 
-이 문서는 My Media Editor의 Ubuntu / Windows 배포 기준 문서입니다.
+## 배포 대상과 실행
 
-## 지원 배포 형태
+v0.1.1부터 다음 배포 파일에 Python, PySide6, FFmpeg와 FFprobe를 포함합니다.
+사용자는 Python이나 FFmpeg를 따로 설치할 필요가 없습니다.
 
-v0.1.0 기준으로 다음 artifact를 생성합니다.
+| 대상 | 파일 | 실행 |
+| --- | --- | --- |
+| Ubuntu 22.04 / 24.04 x86_64 | `MyMediaEditor-0.1.1-x86_64.AppImage` | 실행 권한을 주고 실행 |
+| Windows 10 22H2 / Windows 11 x64 | `MyMediaEditor-0.1.1-windows-x64.zip` | 전체 압축을 풀고 `MyMediaEditor.exe` 실행 |
 
-```text
-Ubuntu 22.04 x86_64
-  → MyMediaEditor-0.1.0-x86_64.AppImage
+이 표는 지원 목표입니다. CI의 실제 검증 환경은 Ubuntu 22.04와 Windows Server 2025입니다.
+Ubuntu 24.04, X11/Wayland, Windows 10/11의 실제 데스크톱 검증은 공개 배포 전에 별도로 수행합니다.
+ARM64, 32비트 Windows, 다른 Linux 배포판의 호환성은 보장하지 않습니다.
 
-Windows x64
-  → MyMediaEditor-0.1.0-windows-x64.zip
-     └─ MyMediaEditor.exe
-```
-
-Python과 PySide6를 사용자 PC에 별도로 설치할 필요가 없도록 Nuitka + PySide6 plugin 기반 standalone executable을 생성합니다.
-
-Linux는 Qt 공식 `pyside6-deploy`를 통해 Nuitka onefile executable을 만든 뒤 AppDir에 넣고 `linuxdeploy`로 AppImage를 생성합니다.
-
-Windows는 CI의 비대화형 환경에서 Dependency Walker 다운로드 승인이 막히지 않도록 Nuitka를 직접 실행하고 `--assume-yes-for-downloads`를 명시합니다.
-
-## FFmpeg 정책
-
-v0.1.0 release artifact에는 FFmpeg / FFprobe binary를 포함하지 않습니다.
-
-이유는 앱 코드와 패키징 안정성을 먼저 검증하고, FFmpeg binary 재배포 시 필요한 license / source 제공 조건을 명확히 정리한 뒤 bundle하기 위해서입니다.
-
-현재 runtime은 다음 순서로 tool을 찾을 수 있도록 준비되어 있습니다.
-
-```text
-1. AppImage: $APPDIR/usr/bin/
-2. standalone executable 옆 bin/
-3. standalone executable 디렉터리
-4. system PATH
-```
-
-따라서 이후 FFmpeg bundle을 추가해도 편집 기능 코드를 변경하지 않고 packaging만 확장할 수 있습니다.
-
-현재 사용자는 `ffmpeg`와 `ffprobe`가 PATH에 있도록 준비해야 합니다.
-
-Ubuntu 22.04:
+Windows에서는 EXE와 함께 `bin/` 및 `third-party/`를 유지합니다.
+Linux의 FFmpeg/FFprobe는 AppImage 내부 `usr/bin/`에 있습니다.
+AppImage 실행 시 FUSE 오류가 나면 다음과 같이 실행합니다.
 
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg
-
-ffmpeg -version
-ffprobe -version
+APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage
 ```
 
-Windows에서는 FFmpeg를 설치한 뒤 `ffmpeg.exe`와 `ffprobe.exe`가 PATH에서 실행되는지 확인합니다.
+## 고정한 도구와 다운로드
 
-```powershell
-ffmpeg -version
-ffprobe -version
-```
+- 앱 의존성: PySide6 6.11.1, imageio-ffmpeg 0.6.0 (`pyproject.toml`)
+- 패키징: Nuitka 4.1.3, zstandard 0.25.0 (`packaging/requirements-build.txt`)
+- FFmpeg/FFprobe: BtbN의 8.1 release branch 빌드 `n8.1.3-9-g29e619e767`, 2026-09-30 월말 보존본
+- Linux AppImage 도구: linuxdeploy `1-alpha-20251107-1`
 
-## Ubuntu local build
+`packaging/ffmpeg.json`에 OS별 FFmpeg archive URL과 SHA256을 고정합니다.
+`scripts/bundle_ffmpeg.py`는 새 다운로드와 캐시를 모두 검증한 뒤 두 실행 파일과
+공급자의 LICENSE/문서를 복사합니다. `latest` URL이나 시스템 PATH의 도구를 패키지에 복사하지 않습니다.
+외부 archive 경로를 그대로 추출하지 않습니다.
 
-전제 조건:
+BtbN 월말 빌드는 공급자의 보존 정책상 2년간 유지됩니다. 보존 기간 만료 전에 검증한 새 빌드로
+URL·해시를 함께 갱신하거나 배포자가 허용된 저장소에 해당 archive를 보존해야 합니다.
 
-- Ubuntu 22.04 x86_64
-- Python 3.10+
-- `python3-venv`
-- `curl`
-- `patchelf`
+앱의 도구 검색 순서는 다음과 같습니다.
 
-`pyside6-deploy`가 Linux에서 사용하는 Nuitka standalone/onefile build는 system `patchelf` command가 필요합니다.
+1. AppImage의 `$APPDIR/usr/bin`
+2. Nuitka 원본 실행 파일 옆 `bin/` 및 실행 파일 디렉터리
+3. 실행 중인 프로그램의 `bin/` 및 디렉터리
+4. 개발 환경의 imageio-ffmpeg (FFmpeg만) 및 시스템 PATH
 
-설치:
+Nuitka onefile의 임시 추출 디렉터리와 원본 EXE 위치를 구분합니다.
+FFprobe도 같은 검색 함수를 사용합니다.
+
+## Linux local build
+
+Ubuntu x86_64, Python 3.11 이상, C compiler, venv, curl, patchelf가 필요합니다.
+Ubuntu 22.04 기본 Python은 3.10이므로 Python 3.11 이상을 별도로 준비합니다.
+CI에서는 Python 3.11을 사용합니다.
 
 ```bash
-sudo apt update
-sudo apt install -y python3-venv curl patchelf
-```
-
-확인:
-
-```bash
-patchelf --version
-curl --version
-```
-
-실행:
-
-```bash
-cd ~/inpyo_ws/my_media_editor
+sudo apt install -y build-essential python3-venv curl patchelf libegl1 libgl1 libpulse0
 bash scripts/build_linux_appimage.sh
 ```
 
-build script는 시작 시 `python3`, `curl`, `patchelf`를 확인하고 누락된 필수 command가 있으면 실제 build 전에 종료합니다.
-
-결과:
-
-```text
-dist/MyMediaEditor-0.1.0-x86_64.AppImage
-```
-
-실행:
+빌드는 전용 `build/package-linux/venv`를 만들고, Nuitka `--onefile`을 명시해
+`build/package-linux/deployment/MyMediaEditor.bin`을 생성합니다.
+결과 파일을 정확한 경로에서 확인하며 `.dist` 폴더의 임의 실행 파일을 선택하지 않습니다.
+FFmpeg와 FFprobe를 추가한 뒤 linuxdeploy로 AppImage를 만듭니다.
 
 ```bash
-chmod +x dist/MyMediaEditor-0.1.0-x86_64.AppImage
-./dist/MyMediaEditor-0.1.0-x86_64.AppImage
+chmod +x dist/MyMediaEditor-0.1.1-x86_64.AppImage
+QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 \
+  ./dist/MyMediaEditor-0.1.1-x86_64.AppImage --self-test
 ```
-
-build script는 별도 `build/package-linux/venv`를 생성하므로 개발용 `.venv`를 수정하지 않습니다.
-
-`pyside6-deploy` 출력 위치와 이름은 PySide 버전에 따라 달라질 수 있습니다. 실제 확인된 PySide6 6.11.1 환경에서는 프로젝트 루트에 `MyMediaEditor.bin`이 생성됩니다. build script는 프로젝트 루트의 `MyMediaEditor.bin` / `deploy_main.bin`을 우선 확인하고, 필요한 경우 `deployment/` 경로도 fallback으로 탐색합니다.
-
-Nuitka의 `zstandard` 미설치 경고는 onefile 압축 최적화 관련 경고이고, `ccache` 미설치 경고는 재빌드 속도 최적화 관련 경고입니다. 둘 다 현재 AppImage build의 필수 조건은 아닙니다.
 
 ## Windows local build
 
-전제 조건:
-
-- Windows x64
-- Python 3.10+
-- PowerShell
-- Visual Studio C++ build tools
-
-PowerShell에서:
+Windows x64, Python 3.11 이상 x64, PowerShell, Visual Studio C++ build tools가 필요합니다.
+Visual Studio의 x64 Native Tools Command Prompt에서 PowerShell을 열어 실행합니다.
 
 ```powershell
-cd C:\path\to\my_media_editor
 .\scripts\build_windows.ps1
+Expand-Archive dist\MyMediaEditor-0.1.1-windows-x64.zip -DestinationPath build\verify-windows
+$env:QT_QPA_PLATFORM = "offscreen"
+& .\build\verify-windows\MyMediaEditor.exe --self-test
+if ($LASTEXITCODE -ne 0) { throw "Package self-test failed" }
 ```
 
-Windows build script는 별도 virtual environment를 만들고 `Nuitka[onefile]`을 설치한 뒤 PySide6 plugin을 활성화하여 `MyMediaEditor.exe`를 생성합니다. Dependency Walker 같은 Nuitka 보조 도구는 CI에서도 자동 승인해 다운로드하도록 설정합니다.
+스크립트는 모든 Python/pip/Nuitka 호출의 종료 코드를 확인합니다.
+빌드 환경은 `build/package-windows/venv`이며, onefile 결과를 정확한 경로에서 복사합니다.
+버전은 설치한 앱의 metadata에서 읽으므로 로컬 경로의 따옴표를 Python 코드에 삽입하지 않습니다.
 
-결과:
+## 완성 패키지 검증
 
-```text
-dist\MyMediaEditor-0.1.0-windows-x64.zip
-```
+`--self-test`는 앱의 실제 실행 파일에서 다음을 검사하며 성공 시 0, 실패 시 1을 반환합니다.
+`--self-test-report <path>`를 추가하면 JSON 결과를 저장합니다.
 
-ZIP을 풀고 `MyMediaEditor.exe`를 실행합니다.
+- 두 실행 도구가 패키지에 있는지 (시스템 도구로 대체하지 않음)
+- 앱 창과 Qt GUI 초기화
+- PNG 이미지 크기 변경 및 저장
+- H.264/AAC MP4 저장
+- VP9/Opus WebM 생성 및 MP4 변환
+- 소리 있는 영상과 무음 영상의 Sequence/Concat
+- Qt Multimedia에서 MP4와 WebM 프레임 실제 디코딩
+- 공백·한글 경로
 
-## GitHub Actions
+진단 중 PATH는 비워집니다. 진단의 변환 명령에는 실행 제한 시간이 있고, CI는 전체 진단을
+3분으로 제한합니다. 실제 사용자 GUI 조작, 오디오 장치 출력, GPU별 동작, X11/Wayland는
+자동 진단만으로 검증되지 않습니다.
 
-`.github/workflows/build-release.yml`은 다음 환경에서 별도로 build합니다.
+## GitHub Actions / Release
 
-```text
-ubuntu-22.04
-  → AppImage
+main push, `v*` tag push, main 대상 PR, 수동 실행에서 OS별 테스트·빌드를 수행합니다.
+PR은 배포하지 않습니다. 빌드 작업은 읽기 권한만 사용합니다.
 
-windows-2025
-  → Windows portable ZIP
-```
+- Linux: 완성 AppImage 자체의 진단
+- Windows: ZIP을 별도 한글·공백 경로에 푼 뒤 EXE 자체의 진단
+- 진단을 통과한 경우에만 OS별 package artifact 업로드
+- 실패 시 가능한 JSON 진단 결과 별도 업로드
+- main: 양쪽 성공 후 `app-latest` 갱신
+- `v*` tag: 양쪽 성공 후 해당 GitHub Release 생성
 
-Linux runner에서는 build 전에 `patchelf`, `curl`과 PySide6 QtGui import에 필요한 `libegl1`, `libgl1`을 apt로 설치합니다.
+같은 ref의 중복 실행은 취소합니다. 안정 버전의 tag는 해당 `pyproject.toml` 버전과 맞춰 사용합니다.
+수동 workflow 실행 또는 PR의 Actions 결과에서 시험 빌드 파일을 받을 수 있습니다.
 
-수동 build:
+## 제3자 고지와 공개 배포 전 확인
 
-1. GitHub repository의 `Actions` 탭으로 이동
-2. `Build desktop packages` 선택
-3. `Run workflow` 선택
-4. 완료 후 workflow run의 `Artifacts`에서 OS별 파일 다운로드
+FFmpeg GPL variant를 사용하며 `libx264` 인코더가 포함됩니다.
+공급자가 archive에 제공한 LICENSE와 문서, 다운로드 URL/SHA256/빌드 recipe 링크가
+`third-party/ffmpeg/` (Linux: `usr/third-party/ffmpeg/`)에 포함됩니다.
+해당 링크를 모든 의존성의 완전한 대응 소스 제공으로 간주하지 않습니다.
 
-## GitHub Release
+공개 배포자는 FFmpeg와 포함 라이브러리, Qt/PySide6의 고지·소스 제공 등 배포 조건을 검토하고
+필요한 자료를 함께 제공해야 합니다. 이 저장소의 패키징 변경은 법적 준수를 보증하지 않습니다.
 
-`v*` tag가 push되면 Linux / Windows build가 모두 성공한 뒤 GitHub Release를 만들고 두 artifact를 첨부합니다.
+공개 배포 전 수동 확인:
 
-예정 release 흐름:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-생성 대상:
-
-```text
-GitHub Releases / v0.1.0
-├── MyMediaEditor-0.1.0-x86_64.AppImage
-└── MyMediaEditor-0.1.0-windows-x64.zip
-```
-
-## Build implementation
-
-Linux standalone executable:
-
-```text
-pyside6-deploy
-  └─ Nuitka onefile
-```
-
-Windows standalone executable:
-
-```text
-Nuitka[onefile]
-  + PySide6 plugin
-  + --assume-yes-for-downloads
-```
-
-Linux AppImage:
-
-```text
-standalone binary
-  ↓
-AppDir
-  ↓
-linuxdeploy
-  ↓
-AppImage
-```
-
-Qt Multimedia plugin 누락을 방지하기 위해 Linux / Windows 모두 multimedia 관련 Qt plugin을 명시적으로 포함합니다.
-
-## Validation
-
-release 전 최소 확인 항목:
-
-- `scripts/check.sh` 통과
-- Ubuntu artifact가 Python / PySide6 설치 없이 시작되는지
-- Windows artifact가 Python / PySide6 설치 없이 시작되는지
-- 이미지 import / preview
-- MP4 / WebM import / preview
-- Trim / Crop / Resize / Rotate / Upscale / Speed Pending edit
-- `Save As…`
-- Sequence / Concat
-- `Ctrl+C` 안전 종료(Ubuntu terminal 실행 시)
-- FFmpeg가 없을 때 사용자가 이해할 수 있는 오류가 표시되는지
-
-## 남은 packaging 작업
-
-1. Ubuntu AppImage clean-machine smoke test
-2. Windows 10 / 11 portable smoke test
-3. FFmpeg / FFprobe bundle의 license 조건 확정
-4. FFmpeg bundle 적용
-5. Windows installer(MSIX 또는 setup executable) 검토
-6. AppImage / Windows code signing 검토
+- Python/FFmpeg/FFprobe가 없는 Ubuntu 22.04/24.04, Windows 10/11에서 실행
+- X11 및 Wayland의 창 표시, Drag & Drop, 파일 대화상자
+- 실제 스피커 재생, 긴 영상 탐색, Trim/Speed/Crop/Rotate 및 저장
+- 읽기 전용 설치 위치, 공백·한글 사용자 폴더에서 실행
+- 제3자 라이선스와 대응 소스 제공 준비
+- Windows installer 및 코드 서명은 별도 후속 작업

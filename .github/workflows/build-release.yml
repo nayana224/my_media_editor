@@ -2,6 +2,8 @@ name: Build desktop packages
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches:
       - main
@@ -9,11 +11,16 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   linux-appimage:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,6 +47,23 @@ jobs:
       - name: Build AppImage
         run: bash scripts/build_linux_appimage.sh
 
+      - name: Test packaged AppImage
+        timeout-minutes: 5
+        env:
+          QT_QPA_PLATFORM: offscreen
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          app=$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)
+          timeout 180 "$app" --self-test --self-test-report "$PWD/linux-package-check.json"
+
+      - name: Upload Linux diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-diagnostics
+          path: linux-package-check.json
+          if-no-files-found: warn
+
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
@@ -49,6 +73,7 @@ jobs:
 
   windows-portable:
     runs-on: windows-2025
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,6 +114,34 @@ jobs:
             exit $LASTEXITCODE
           }
 
+      - name: Test extracted Windows ZIP
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $zip = Get-ChildItem dist/*.zip | Select-Object -First 1
+          $testDir = Join-Path $env:RUNNER_TEMP "Media Editor 검증"
+          Expand-Archive $zip.FullName $testDir
+          $report = Join-Path $env:GITHUB_WORKSPACE "windows-package-check.json"
+          $app = Join-Path $testDir "MyMediaEditor.exe"
+          $process = Start-Process -FilePath $app -ArgumentList @("--self-test", "--self-test-report", "`"$report`"") -PassThru -NoNewWindow
+          if (-not $process.WaitForExit(180000)) {
+            taskkill /PID $process.Id /T /F
+            throw "Packaged self-test timed out"
+          }
+          if ($process.ExitCode -ne 0) { throw "Packaged self-test failed: $($process.ExitCode)" }
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if ($result.status -ne "passed") { throw "Packaged self-test did not pass" }
+
+      - name: Upload Windows diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-diagnostics
+          path: windows-package-check.json
+          if-no-files-found: warn
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
@@ -97,7 +150,9 @@ jobs:
           if-no-files-found: error
 
   latest-release:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     needs:
       - linux-appimage
       - windows-portable
@@ -107,6 +162,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          pattern: "*-x*"
           merge-multiple: true
 
       - name: Publish latest desktop packages
@@ -125,7 +181,9 @@ jobs:
             --notes "Latest successful desktop build from main."
 
   github-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     needs:
       - linux-appimage
       - windows-portable
@@ -135,6 +193,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          pattern: "*-x*"
           merge-multiple: true
 
       - name: Create GitHub Release
