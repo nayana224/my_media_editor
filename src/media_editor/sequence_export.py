@@ -26,7 +26,7 @@ def find_ffprobe() -> str:
     return find_runtime_tool("ffprobe")
 
 
-def probe_video(path: Path) -> VideoProbe:
+def probe_video(path: Path, *, require_duration: bool = True) -> VideoProbe:
     """Sequence 정규화에 필요한 video metadata를 읽는다."""
     command = [
         find_ffprobe(),
@@ -64,16 +64,19 @@ def probe_video(path: Path) -> VideoProbe:
         raise ValueError(f"video stream이 없습니다: {path}")
 
     duration = float(data.get("format", {}).get("duration", 0.0) or 0.0)
-    if duration <= 0:
+    if require_duration and duration <= 0:
         raise ValueError(f"영상 길이를 읽지 못했습니다: {path}")
 
+    width, height = int(video_stream["width"]), int(video_stream["height"])
+    if width <= 0 or height <= 0:
+        raise ValueError(f"영상 해상도를 읽지 못했습니다: {path}")
     rotation = video_stream.get("tags", {}).get("rotate", 0)
     for side_data in video_stream.get("side_data_list", []):
         if "rotation" in side_data:
             rotation = side_data["rotation"]
     return VideoProbe(
-        width=int(video_stream["width"]),
-        height=int(video_stream["height"]),
+        width=width,
+        height=height,
         duration_seconds=duration,
         rotation=round(float(rotation)) % 360,
         has_audio=any(

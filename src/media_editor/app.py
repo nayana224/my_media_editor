@@ -120,7 +120,7 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         source_size = None
         if asset.kind is MediaKind.VIDEO:
             try:
-                source_size = probe_video(asset.path).editing_size
+                source_size = probe_video(asset.path, require_duration=False).editing_size
             except (OSError, RuntimeError, ValueError) as exc:
                 self._show_error(f"원본 영상 해상도를 읽지 못했습니다.\n{exc}")
                 return

@@ -104,3 +104,23 @@ class CropRegressionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Crop"):
             build_save_command(Path("in.mp4"), Path("out.mp4"), MediaKind.VIDEO,
                                EditState(crop=(0, 0, 2536, 1058)), source_size=(1920, 1080))
+
+
+class ProbeSizeRegressionTest(unittest.TestCase):
+    @patch("media_editor.sequence_export.find_ffprobe", return_value="ffprobe")
+    @patch("media_editor.sequence_export.subprocess.run")
+    def test_size_probe_accepts_webm_without_duration_but_sequence_rejects_it(self, run, _):
+        from media_editor.sequence_export import probe_video
+        run.return_value = SimpleNamespace(returncode=0, stdout='{"streams":[{"codec_type":"video","width":640,"height":480}],"format":{}}')
+        result = probe_video(Path("recording.webm"), require_duration=False)
+        self.assertEqual(result.editing_size, (640, 480))
+        with self.assertRaisesRegex(ValueError, "영상 길이"):
+            probe_video(Path("recording.webm"))
+
+    @patch("media_editor.sequence_export.find_ffprobe", return_value="ffprobe")
+    @patch("media_editor.sequence_export.subprocess.run")
+    def test_invalid_video_size_is_rejected_before_opening_crop(self, run, _):
+        from media_editor.sequence_export import probe_video
+        run.return_value = SimpleNamespace(returncode=0, stdout='{"streams":[{"codec_type":"video","width":0,"height":480}],"format":{}}')
+        with self.assertRaisesRegex(ValueError, "영상 해상도"):
+            probe_video(Path("broken.mp4"), require_duration=False)
