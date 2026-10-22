@@ -643,6 +643,7 @@ class MainWindow(QMainWindow):
                 output_path,
                 self.current_asset.kind,
                 state,
+                source_size=self._source_media_size(),
             )
         except (FileNotFoundError, ValueError) as exc:
             self._show_error(str(exc))
@@ -701,7 +702,9 @@ class MainWindow(QMainWindow):
             stderr = bytes(process.readAllStandardError()).decode(
                 errors="replace"
             ).strip()
-            self._show_error(f"{action}에 실패했습니다.\n\n{stderr}")
+            error = QMessageBox(QMessageBox.Icon.Critical, "Media Editor", f"{action}에 실패했습니다. 자세한 내용에서 오류 로그를 확인해 주세요.", parent=self)
+            error.setDetailedText(stderr)
+            error.exec()
             return
 
         if source_path is not None:

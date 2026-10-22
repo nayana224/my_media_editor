@@ -42,5 +42,35 @@ class RuntimeToolsTest(unittest.TestCase):
                 )
 
 
+class PackagedToolPathsTest(unittest.TestCase):
+    def test_nuitka_onefile_uses_original_bundle_for_both_tools(self):
+        from types import SimpleNamespace
+        import media_editor.runtime_tools as runtime
+        from media_editor.sequence_export import find_ffprobe
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundle = root / "설치 폴더"
+            (bundle / "bin").mkdir(parents=True)
+            extracted = root / "onefile_temp"
+            extracted.mkdir()
+            for name in ("ffmpeg", "ffprobe"):
+                (bundle / "bin" / (name + ".exe")).touch()
+            with patch.dict(os.environ, {"PATH": ""}, clear=True), \
+                 patch.object(runtime.sys, "platform", "win32"), \
+                 patch.object(runtime.sys, "executable", str(extracted / "MyMediaEditor.exe")), \
+                 patch.object(runtime, "__compiled__", SimpleNamespace(containing_dir=str(bundle)), create=True):
+                self.assertEqual(runtime.find_runtime_tool("ffmpeg", bundled_only=True), str(bundle / "bin/ffmpeg.exe"))
+                self.assertEqual(find_ffprobe(), str(bundle / "bin/ffprobe.exe"))
+
+    def test_bundled_only_does_not_accept_system_tools(self):
+        import media_editor.runtime_tools as runtime
+        with patch.object(runtime, "_runtime_tool_directories", return_value=[]), \
+             patch.object(runtime.shutil, "which", return_value="/usr/bin/ffprobe") as which:
+            with self.assertRaises(FileNotFoundError):
+                runtime.find_runtime_tool("ffprobe", bundled_only=True)
+            which.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

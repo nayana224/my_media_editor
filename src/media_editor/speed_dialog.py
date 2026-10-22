@@ -53,6 +53,9 @@ class SpeedDialog(QDialog):
         description.setObjectName("dialogDescription")
 
         self.preview = EditedVideoWidget()
+        source_size_getter = getattr(parent, "_source_media_size", None)
+        if callable(source_size_getter):
+            self.preview.set_source_size(source_size_getter())
         self.preview.setMinimumHeight(340)
         self.preview.set_edit_provider(lambda: edits)
 

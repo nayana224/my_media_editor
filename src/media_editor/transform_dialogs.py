@@ -157,7 +157,15 @@ class CropSelectionWidget(QWidget):
         self.selection_changed.emit(self.source_rect)
         self.update()
 
+    @property
+    def pixel_aspect_ratio(self) -> float:
+        if self._preview_pixmap.isNull():
+            return 1.0
+        return (self._preview_pixmap.width() / self._preview_pixmap.height()) / (self._source_width / self._source_height)
+
     def set_aspect_ratio(self, ratio: float | None) -> None:
+        # Presets describe the visible shape, while selection coordinates are encoded pixels.
+        ratio = ratio / self.pixel_aspect_ratio if ratio is not None else None
         self._aspect_ratio = ratio
         if ratio is None:
             return
@@ -240,7 +248,12 @@ class CropSelectionWidget(QWidget):
             painter.drawPixmap(
                 media_rect.toRect(),
                 self._preview_pixmap,
-                self._view_rect.toRect(),
+                QRectF(
+                    self._view_rect.x() * self._preview_pixmap.width() / self._source_width,
+                    self._view_rect.y() * self._preview_pixmap.height() / self._source_height,
+                    self._view_rect.width() * self._preview_pixmap.width() / self._source_width,
+                    self._view_rect.height() * self._preview_pixmap.height() / self._source_height,
+                ).toRect(),
             )
 
         if self._selection.intersected(self._view_rect).isEmpty():
@@ -292,12 +305,12 @@ class CropSelectionWidget(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
 
-        source_point = self._display_to_source(event.position())
-        if source_point is None:
-            return
-
         display_selection = self._source_to_display_rect(self._selection)
         handle = self._hit_handle(event.position(), display_selection)
+        # Handles straddle the image boundary, including the initial full frame.
+        source_point = self._display_to_source(event.position(), clamp=handle is not None)
+        if source_point is None:
+            return
         self._press_source = source_point
         self._initial_selection = QRectF(self._selection)
 
@@ -487,12 +500,14 @@ class CropSelectionWidget(QWidget):
             -8.0,
             -8.0,
         )
-        scale = min(
-            available.width() / self._view_rect.width(),
-            available.height() / self._view_rect.height(),
-        )
-        width = self._view_rect.width() * scale
-        height = self._view_rect.height() * scale
+        # The decoded display image may be wider than the encoded pixel grid (SAR).
+        pixel_x = self._preview_pixmap.width() / self._source_width if not self._preview_pixmap.isNull() else 1.0
+        pixel_y = self._preview_pixmap.height() / self._source_height if not self._preview_pixmap.isNull() else 1.0
+        view_width = self._view_rect.width() * pixel_x
+        view_height = self._view_rect.height() * pixel_y
+        scale = min(available.width() / view_width, available.height() / view_height)
+        width = view_width * scale
+        height = view_height * scale
         return QRectF(
             available.center().x() - width / 2,
             available.center().y() - height / 2,
@@ -539,37 +554,33 @@ class CropSelectionWidget(QWidget):
 
     def _handle_rects(self, rect: QRectF) -> dict[str, QRectF]:
         half = self.HANDLE_SIZE / 2
-        return {
-            "top_left": QRectF(
-                rect.left() - half,
-                rect.top() - half,
-                self.HANDLE_SIZE,
-                self.HANDLE_SIZE,
-            ),
-            "top_right": QRectF(
-                rect.right() - half,
-                rect.top() - half,
-                self.HANDLE_SIZE,
-                self.HANDLE_SIZE,
-            ),
-            "bottom_left": QRectF(
-                rect.left() - half,
-                rect.bottom() - half,
-                self.HANDLE_SIZE,
-                self.HANDLE_SIZE,
-            ),
-            "bottom_right": QRectF(
-                rect.right() - half,
-                rect.bottom() - half,
-                self.HANDLE_SIZE,
-                self.HANDLE_SIZE,
-            ),
+        points = {
+            "top_left": rect.topLeft(), "top_right": rect.topRight(),
+            "bottom_left": rect.bottomLeft(), "bottom_right": rect.bottomRight(),
+            "left": QPointF(rect.left(), rect.center().y()),
+            "right": QPointF(rect.right(), rect.center().y()),
+            "top": QPointF(rect.center().x(), rect.top()),
+            "bottom": QPointF(rect.center().x(), rect.bottom()),
         }
+        return {name: QRectF(point.x() - half, point.y() - half, self.HANDLE_SIZE, self.HANDLE_SIZE)
+                for name, point in points.items()}
 
     def _hit_handle(self, point: QPointF, rect: QRectF) -> str | None:
+        # Larger invisible targets, and the entire border is draggable.
         for name, handle in self._handle_rects(rect).items():
-            if handle.contains(point):
+            if handle.adjusted(-4, -4, 4, 4).contains(point):
                 return name
+        margin = 8.0
+        if rect.top() - margin <= point.y() <= rect.bottom() + margin:
+            if abs(point.x() - rect.left()) <= margin:
+                return "left"
+            if abs(point.x() - rect.right()) <= margin:
+                return "right"
+        if rect.left() - margin <= point.x() <= rect.right() + margin:
+            if abs(point.y() - rect.top()) <= margin:
+                return "top"
+            if abs(point.y() - rect.bottom()) <= margin:
+                return "bottom"
         return None
 
     def _update_cursor(self, point: QPointF) -> None:
@@ -579,6 +590,10 @@ class CropSelectionWidget(QWidget):
             self.setCursor(Qt.CursorShape.SizeFDiagCursor)
         elif handle in ("top_right", "bottom_left"):
             self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        elif handle in ("left", "right"):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif handle in ("top", "bottom"):
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
         elif self._selection_is_full_frame():
             self.setCursor(Qt.CursorShape.CrossCursor)
         elif selection.contains(point):
@@ -601,13 +616,38 @@ class CropSelectionWidget(QWidget):
 
     def _resize_from_handle(self, handle: str, point: QPointF) -> None:
         rect = self._initial_selection
-        anchors = {
-            "top_left": rect.bottomRight(),
-            "top_right": rect.bottomLeft(),
-            "bottom_left": rect.topRight(),
-            "bottom_right": rect.topLeft(),
-        }
-        self._selection = self._rect_from_anchor(anchors[handle], point)
+        left, right, top, bottom = rect.left(), rect.right(), rect.top(), rect.bottom()
+        minimum_x = min(self.MIN_SELECTION_PX, float(self._source_width))
+        minimum_y = min(self.MIN_SELECTION_PX, float(self._source_height))
+        if "left" in handle:
+            left = max(0.0, min(point.x(), right - minimum_x))
+        if "right" in handle:
+            right = min(float(self._source_width), max(point.x(), left + minimum_x))
+        if "top" in handle:
+            top = max(0.0, min(point.y(), bottom - minimum_y))
+        if "bottom" in handle:
+            bottom = min(float(self._source_height), max(point.y(), top + minimum_y))
+        if self._aspect_ratio is None:
+            self._selection = QRectF(left, top, right - left, bottom - top)
+            return
+        ratio = self._aspect_ratio
+        if handle in ("left", "right"):
+            width = min(right - left, 2 * min(rect.center().y(), self._source_height - rect.center().y()) * ratio)
+            height = width / ratio
+            left = rect.right() - width if handle == "left" else rect.left()
+            top = rect.center().y() - height / 2
+            self._selection = QRectF(left, top, width, height)
+        elif handle in ("top", "bottom"):
+            height = min(bottom - top, 2 * min(rect.center().x(), self._source_width - rect.center().x()) / ratio)
+            width = height * ratio
+            top = rect.bottom() - height if handle == "top" else rect.top()
+            left = rect.center().x() - width / 2
+            self._selection = QRectF(left, top, width, height)
+        else:
+            anchors = {"top_left": rect.bottomRight(), "top_right": rect.bottomLeft(),
+                       "bottom_left": rect.topRight(), "bottom_right": rect.topLeft()}
+            moving = QPointF(left if "left" in handle else right, top if "top" in handle else bottom)
+            self._selection = self._rect_from_anchor(anchors[handle], moving)
 
     def _rect_from_anchor(self, anchor: QPointF, point: QPointF) -> QRectF:
         dx = point.x() - anchor.x()
@@ -805,7 +845,7 @@ class CropDialog(QDialog):
     def _apply_aspect(self) -> None:
         value = self.aspect_combo.currentData()
         if value == "source":
-            value = self._source_width / self._source_height
+            value = self._source_width / self._source_height * self.crop_preview.pixel_aspect_ratio
         self.crop_preview.set_aspect_ratio(value)
 
     def _center_eighty(self) -> None:

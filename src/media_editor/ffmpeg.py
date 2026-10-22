@@ -81,7 +81,7 @@ def _h264_mp4_options(
         options.extend(["-af", audio_filter])
     options.extend(
         [
-            "-vsync", "0",
+            "-fps_mode", "passthrough",
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", "20",
@@ -188,6 +188,7 @@ def build_save_command(
     output_path: Path,
     kind: MediaKind,
     edits: EditState,
+    source_size: tuple[int, int] | None = None,
 ) -> list[str]:
     """누적 편집 상태를 한 번의 FFmpeg 실행으로 저장한다."""
     filters: list[str] = []
@@ -196,6 +197,8 @@ def build_save_command(
         x, y, width, height = edits.crop
         if min(x, y) < 0 or width <= 0 or height <= 0:
             raise ValueError("Crop 위치와 크기를 확인해 주세요.")
+        if source_size is not None and (x + width > source_size[0] or y + height > source_size[1]):
+            raise ValueError("Crop 영역이 원본 영상 크기를 벗어났습니다. Crop을 다시 설정해 주세요.")
         filters.append(f"crop={width}:{height}:{x}:{y}")
 
     if edits.rotation is not None:

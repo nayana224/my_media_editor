@@ -1,0 +1,3 @@
+# Validated desktop build toolchain; update together with package smoke tests.
+Nuitka[onefile]==4.1.3
+zstandard==0.25.0

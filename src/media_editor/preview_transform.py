@@ -7,7 +7,9 @@ from media_editor.edit_state import EditState
 PREVIEW_MAX_DIMENSION = 1600
 
 
-def apply_preview_edits(image: QImage, edits: EditState | None) -> QImage:
+def apply_preview_edits(
+    image: QImage, edits: EditState | None, source_size: tuple[int, int] | None = None,
+) -> QImage:
     """Save pipeline의 공간 편집을 빠른 화면 preview용으로 적용한다."""
     if image.isNull() or edits is None:
         return image.copy()
@@ -16,6 +18,12 @@ def apply_preview_edits(image: QImage, edits: EditState | None) -> QImage:
 
     if edits.crop is not None:
         x, y, width, height = edits.crop
+        if source_size is not None:
+            source_width, source_height = source_size
+            scale_x, scale_y = image.width() / source_width, image.height() / source_height
+            right, bottom = round((x + width) * scale_x), round((y + height) * scale_y)
+            x, y = round(x * scale_x), round(y * scale_y)
+            width, height = right - x, bottom - y
         x = min(max(0, x), max(0, result.width() - 1))
         y = min(max(0, y), max(0, result.height() - 1))
         width = min(max(1, width), result.width() - x)

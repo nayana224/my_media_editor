@@ -4,7 +4,7 @@ Windows와 Ubuntu에서 이미지와 영상을 Preview하면서 편집하고 변
 
 ## 현재 버전
 
-`v0.1.0` release 준비 단계입니다.
+`v0.1.2` 배포 안정화 작업입니다.
 
 현재 주요 기능:
 
@@ -150,15 +150,15 @@ Terminal 실행 중 `Ctrl+C`를 보내면 재생과 FFmpeg child process를 정�
 현재 다음 package를 생성하도록 준비되어 있습니다.
 
 ```text
-Ubuntu 22.04 x86_64
-  → MyMediaEditor-0.1.0-x86_64.AppImage
+Ubuntu Desktop 22.04 이상 x86_64
+  → MyMediaEditor-0.1.2-x86_64.AppImage
 
 Windows x64
-  → MyMediaEditor-0.1.0-windows-x64.zip
+  → MyMediaEditor-0.1.2-windows-x64.zip
      └─ MyMediaEditor.exe
 ```
 
-Python / PySide6 standalone executable은 Qt 공식 `pyside6-deploy`로 생성합니다.
+Python / PySide6 실행 파일은 두 OS 모두 버전을 고정한 Nuitka의 `--onefile` 모드로 생성합니다. 완성 패키지의 자체 진단이 통과해야 배포합니다.
 
 자세한 local build, GitHub Actions, GitHub Release 절차와 FFmpeg packaging 정책은 [docs/packaging.md](docs/packaging.md)를 확인하세요.
 
@@ -173,18 +173,16 @@ Python / PySide6 standalone executable은 Qt 공식 `pyside6-deploy`로 생성�
 
 ## FFmpeg dependency
 
-현재 `v0.1.0` package는 앱 자체의 standalone 배포를 먼저 검증하기 위해 FFmpeg / FFprobe binary를 포함하지 않습니다.
+v0.1.2 패키지는 FFmpeg와 FFprobe를 함께 포함합니다. 사용자는 별도 설치가 필요하지 않습니다.
+Windows에서는 ZIP 전체를 풀고 `bin/`, `third-party/` 폴더를 EXE 옆에 유지하세요.
+Linux 패키지는 Ubuntu Desktop 22.04 이상 x86_64, Windows 패키지는 Windows 10 22H2/11 x64를 지원 대상으로 합니다.
+배포용 AppImage는 Ubuntu 22.04에서 한 번만 만들고, 같은 파일을 Ubuntu 22.04/24.04/26.04에서 검사합니다.
+실제 CI 검증 환경과 수동 확인 범위는 [배포 문서](docs/packaging.md)를 참고하세요.
 
-Ubuntu:
-
-```bash
-sudo apt update
-sudo apt install -y ffmpeg
-```
-
-Windows에서는 `ffmpeg.exe`, `ffprobe.exe`가 PATH에서 실행 가능해야 합니다.
-
-runtime은 향후 bundled FFmpeg를 바로 사용할 수 있도록 AppImage의 `$APPDIR/usr/bin`, executable 옆 `bin/`, system PATH 순으로 외부 tool 경로를 지원합니다.
+개발 환경에서 영상의 원본 해상도를 읽거나 Sequence를 사용하려면 FFprobe가 필요합니다. Ubuntu에서는 `sudo apt install ffmpeg`로 준비할 수 있습니다.
+완성 앱은 `--self-test`로 이미지 저장, MP4/WebM 변환·미리보기, 무음 영상이 섞인 Sequence 및 한글 경로를 검사합니다.
+FFmpeg 다운로드와 SHA256은 `packaging/ffmpeg.json`에 고정되어 있습니다.
+공급자 고지와 빌드 정보는 패키지의 `third-party/ffmpeg/`에 포함됩니다(Linux: `usr/third-party/ffmpeg/`).
 
 ## Architecture
 
@@ -218,7 +216,7 @@ PySide6 GUI
     |       +-- packaged executable / system tool resolution
     |
     +-- Packaging
-            |-- pyside6-deploy
+            |-- Nuitka onefile
             |-- Linux AppImage
             +-- Windows portable ZIP
 ```
@@ -232,7 +230,7 @@ PySide6 GUI
 
 1. Ubuntu AppImage clean-machine smoke test
 2. Windows 10 / 11 portable smoke test
-3. FFmpeg / FFprobe bundle license 조건 확정 및 bundle 적용
+3. 공개 배포용 제3자 고지 및 대응 소스 제공 검토
 4. Timeline frame-step / J-K-L / marker / snap
 5. Side-by-side / Top-bottom / 2x2 Grid compose
 6. Export progress / cancel
