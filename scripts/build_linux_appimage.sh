@@ -68,6 +68,7 @@ QT_RUNTIME_LIBRARIES=(
   libxcb-cursor.so.0 libxkbcommon-x11.so.0 libxcb-icccm.so.4
   libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-render-util.so.0
   libxcb-xinerama.so.0 libxcb-xkb.so.1 libxcb-randr.so.0
+  libxcb-shape.so.0 libxcb-sync.so.1 libxcb-xfixes.so.0 libX11-xcb.so.1
 )
 LIBRARY_ARGS=()
 for library in "${QT_RUNTIME_LIBRARIES[@]}"; do
