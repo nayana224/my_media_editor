@@ -57,6 +57,7 @@ jobs:
         run: |
           app=$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)
           timeout 180 "$app" --self-test --self-test-report "$PWD/linux-package-check.json"
+          python3 -c 'import json, sys; sys.exit(0 if json.load(open("linux-package-check.json", encoding="utf-8"))["status"] == "passed" else 1)'
 
       - name: Upload Linux diagnostics
         if: always()
@@ -111,6 +112,7 @@ jobs:
           rm -rf squashfs-root
           QT_QPA_PLATFORM=offscreen timeout 180 "$app" --self-test --self-test-report "$PWD/offscreen-check.json"
           xvfb-run -a env QT_QPA_PLATFORM=xcb timeout 180 "$app" --self-test --self-test-report "$PWD/x11-check.json"
+          python3 -c 'import json, sys; sys.exit(0 if all(json.load(open(name, encoding="utf-8"))["status"] == "passed" for name in ("offscreen-check.json", "x11-check.json")) else 1)'
 
       - name: Upload compatibility diagnostics
         if: always()
