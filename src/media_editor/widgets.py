@@ -31,6 +31,7 @@ class EditedVideoWidget(QLabel):
         self._edit_provider: Callable[[], EditState | None] | None = None
         self._source_image = QImage()
         self._preview_image = QImage()
+        self._source_size: tuple[int, int] | None = None
 
     def videoSink(self) -> QVideoSink:
         return self._video_sink
@@ -40,6 +41,9 @@ class EditedVideoWidget(QLabel):
         provider: Callable[[], EditState | None],
     ) -> None:
         self._edit_provider = provider
+
+    def set_source_size(self, size: tuple[int, int] | None) -> None:
+        self._source_size = size
 
     def source_image(self) -> QImage:
         return self._source_image.copy()
@@ -52,7 +56,7 @@ class EditedVideoWidget(QLabel):
             return
 
         edits = self._edit_provider() if self._edit_provider is not None else None
-        self._preview_image = apply_preview_edits(self._source_image, edits)
+        self._preview_image = apply_preview_edits(self._source_image, edits, self._source_size)
         self._update_pixmap()
 
     def clear_frame(self) -> None:

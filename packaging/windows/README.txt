@@ -1,4 +1,4 @@
-My Media Editor v0.1.1 — Windows x64 portable
+My Media Editor v0.1.2 — Windows x64 portable
 
 지원 대상: Windows 10 22H2 / Windows 11 x64
 실행: ZIP 전체를 풀고 MyMediaEditor.exe를 실행합니다.

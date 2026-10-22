@@ -2,13 +2,13 @@
 
 ## 배포 대상과 실행
 
-v0.1.1부터 다음 배포 파일에 Python, PySide6, FFmpeg와 FFprobe를 포함합니다.
+v0.1.2부터 다음 배포 파일에 Python, PySide6, FFmpeg와 FFprobe를 포함합니다.
 사용자는 Python이나 FFmpeg를 따로 설치할 필요가 없습니다.
 
 | 대상 | 파일 | 실행 |
 | --- | --- | --- |
-| Ubuntu Desktop 22.04 이상 x86_64 | `MyMediaEditor-0.1.1-x86_64.AppImage` | 실행 권한을 주고 실행 |
-| Windows 10 22H2 / Windows 11 x64 | `MyMediaEditor-0.1.1-windows-x64.zip` | 전체 압축을 풀고 `MyMediaEditor.exe` 실행 |
+| Ubuntu Desktop 22.04 이상 x86_64 | `MyMediaEditor-0.1.2-x86_64.AppImage` | 실행 권한을 주고 실행 |
+| Windows 10 22H2 / Windows 11 x64 | `MyMediaEditor-0.1.2-windows-x64.zip` | 전체 압축을 풀고 `MyMediaEditor.exe` 실행 |
 
 Ubuntu 최소 기준은 22.04 (glibc 2.35)입니다. 배포용 AppImage는 Ubuntu 22.04에서 한 번만 빌드하고,
 그 동일 파일을 Ubuntu 22.04/24.04/26.04에서 offscreen 및 X11(Xvfb)로 검증합니다.
@@ -22,7 +22,7 @@ Linux의 FFmpeg/FFprobe는 AppImage 내부 `usr/bin/`에 있습니다.
 AppImage 실행 시 FUSE 오류가 나면 다음과 같이 실행합니다.
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.2-x86_64.AppImage
 ```
 
 ## 고정한 도구와 다운로드
@@ -77,9 +77,9 @@ Ubuntu 사용자가 `libxcb-cursor0`를 별도로 설치하도록 요구하지 �
 임시 디렉터리에 풀린 Qt 플러그인이 동봉 라이브러리를 찾게 합니다.
 
 ```bash
-chmod +x dist/MyMediaEditor-0.1.1-x86_64.AppImage
+chmod +x dist/MyMediaEditor-0.1.2-x86_64.AppImage
 QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 \
-  ./dist/MyMediaEditor-0.1.1-x86_64.AppImage --self-test
+  ./dist/MyMediaEditor-0.1.2-x86_64.AppImage --self-test
 ```
 
 ## Windows local build
@@ -89,7 +89,7 @@ Visual Studio의 x64 Native Tools Command Prompt에서 PowerShell을 열어 실�
 
 ```powershell
 .\scripts\build_windows.ps1
-Expand-Archive dist\MyMediaEditor-0.1.1-windows-x64.zip -DestinationPath build\verify-windows
+Expand-Archive dist\MyMediaEditor-0.1.2-windows-x64.zip -DestinationPath build\verify-windows
 $env:QT_QPA_PLATFORM = "offscreen"
 & .\build\verify-windows\MyMediaEditor.exe --self-test
 if ($LASTEXITCODE -ne 0) { throw "Package self-test failed" }

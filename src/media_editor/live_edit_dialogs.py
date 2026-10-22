@@ -72,9 +72,12 @@ def _render_pending(
     **overrides,
 ) -> QImage:
     """현재 전체 pipeline + dialog 임시 값을 preview용 image로 계산한다."""
+    size_getter = getattr(parent, "_source_media_size", None)
+    source_size = size_getter() if callable(size_getter) else None
     return apply_preview_edits(
         _source_image(parent),
         _pending_state(parent, **overrides),
+        source_size,
     )
 
 
@@ -456,6 +459,9 @@ class LiveTrimDialog(QDialog):
         self.audio_output = QAudioOutput(self)
         self.player = QMediaPlayer(self)
         self.preview = EditedVideoWidget()
+        source_size_getter = getattr(parent, "_source_media_size", None)
+        if callable(source_size_getter):
+            self.preview.set_source_size(source_size_getter())
         self.preview.setMinimumHeight(360)
         self.preview.set_edit_provider(lambda: _pending_state(parent))
         self.player.setAudioOutput(self.audio_output)

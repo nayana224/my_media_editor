@@ -21,7 +21,7 @@ def _run(command: list[str]) -> str:
     return result.stdout
 
 
-def _check_preview(path: Path) -> None:
+def _check_preview(path: Path):
     from PySide6.QtCore import QEventLoop, QTimer, QUrl
     from PySide6.QtMultimedia import QMediaPlayer, QVideoSink
 
@@ -34,7 +34,7 @@ def _check_preview(path: Path) -> None:
 
     def frame_ready(frame):
         if frame.isValid() and not frame.toImage().isNull():
-            frames.append(True)
+            frames.append(frame.toImage().copy())
             loop.quit()
 
     def failed(error, message):
@@ -55,6 +55,7 @@ def _check_preview(path: Path) -> None:
     player.setSource(QUrl())
     if not frames:
         raise RuntimeError(f"Qt Multimedia preview failed: {errors or 'no decoded frame within 20 seconds'}")
+    return frames[0]
 
 
 def run_checks() -> dict:
@@ -112,13 +113,31 @@ def run_checks() -> dict:
                 raise RuntimeError("Sequence export duration/audio incorrect")
             _check_preview(edited)
             _check_preview(webm)
+
+            # Regression: Qt expands anamorphic frames, but crop uses encoded pixels.
+            anamorphic = root / "비정사각 픽셀.mp4"
+            _run([ffmpeg, "-hide_banner", "-y", "-i", str(first),
+                  "-vf", "scale=320:180,setsar=3/2", "-an", "-c:v", "libx264", str(anamorphic)])
+            encoded_size = probe_video(anamorphic).editing_size
+            if encoded_size != (320, 180):
+                raise RuntimeError("Encoded video size is incorrect")
+            frame = _check_preview(anamorphic)
+            from media_editor.preview_transform import apply_preview_edits
+            crop = EditState(crop=(40, 20, 240, 140))
+            preview = apply_preview_edits(frame, crop, encoded_size)
+            if abs(preview.width() / preview.height() - (240 * 1.5 / 140)) > .02:
+                raise RuntimeError("Anamorphic crop preview mapping is incorrect")
+            cropped = root / "비정사각 crop.mp4"
+            _run(build_save_command(anamorphic, cropped, MediaKind.VIDEO, crop, source_size=encoded_size))
+            if probe_video(cropped).editing_size != (240, 140):
+                raise RuntimeError("Anamorphic crop export is incorrect")
     finally:
         window.shutdown()
         window.close()
         app.processEvents()
     return {"status": "passed", "tools": versions,
             "checks": ["GUI startup", "bundled FFmpeg/FFprobe", "PNG resize/export", "MP4 export",
-                       "WebM conversion", "sequence with silent clip", "MP4/WebM decoded preview", "Unicode paths"]}
+                       "WebM conversion", "sequence with silent clip", "MP4/WebM decoded preview", "Unicode paths", "anamorphic crop/export"]}
 
 
 def main() -> int:

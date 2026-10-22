@@ -13,6 +13,12 @@ class VideoProbe:
     height: int
     duration_seconds: float
     has_audio: bool
+    rotation: int = 0
+
+    @property
+    def editing_size(self) -> tuple[int, int]:
+        # FFmpeg autorotates before applying crop filters.
+        return (self.height, self.width) if self.rotation % 180 == 90 else (self.width, self.height)
 
 
 def find_ffprobe() -> str:
@@ -27,17 +33,22 @@ def probe_video(path: Path) -> VideoProbe:
         "-v",
         "error",
         "-show_entries",
-        "stream=codec_type,width,height:format=duration",
+        "stream=codec_type,width,height:stream_tags=rotate:stream_side_data=rotation:format=duration",
         "-of",
         "json",
         str(path),
     ]
-    completed = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("영상 정보 읽기 시간이 초과됐습니다. 다른 파일로 다시 시도해 주세요.") from exc
     if completed.returncode != 0:
         raise RuntimeError(
             f"영상 정보를 읽지 못했습니다: {path}\n{completed.stderr.strip()}"
@@ -56,10 +67,15 @@ def probe_video(path: Path) -> VideoProbe:
     if duration <= 0:
         raise ValueError(f"영상 길이를 읽지 못했습니다: {path}")
 
+    rotation = video_stream.get("tags", {}).get("rotate", 0)
+    for side_data in video_stream.get("side_data_list", []):
+        if "rotation" in side_data:
+            rotation = side_data["rotation"]
     return VideoProbe(
         width=int(video_stream["width"]),
         height=int(video_stream["height"]),
         duration_seconds=duration,
+        rotation=round(float(rotation)) % 360,
         has_audio=any(
             stream.get("codec_type") == "audio" for stream in streams
         ),

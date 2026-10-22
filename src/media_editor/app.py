@@ -14,6 +14,7 @@ from media_editor.sequence_dialog import SequenceDialog
 from media_editor.sequence_export import (
     build_sequence_command,
     make_sequence_output_path,
+    probe_video,
 )
 from media_editor.speed_feature import install_speed_feature
 from media_editor.style import APP_STYLE
@@ -116,6 +117,16 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         self._start_ffmpeg_job(command, output_path, "Sequence Export")
 
     def _load_asset(self, asset) -> None:
+        source_size = None
+        if asset.kind is MediaKind.VIDEO:
+            try:
+                source_size = probe_video(asset.path).editing_size
+            except (OSError, RuntimeError, ValueError) as exc:
+                self._show_error(f"원본 영상 해상도를 읽지 못했습니다.\n{exc}")
+                return
+        self._video_source_size = source_size
+        self.video_widget.clear_frame()
+        self.video_widget.set_source_size(source_size)
         self._cancel_preview_priming()
         super()._load_asset(asset)
 
@@ -134,10 +145,9 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         if self.current_asset is None:
             return None
 
-        image = self._source_preview_image()
-        if image.isNull():
-            return None
-        return image.width(), image.height()
+        if self.current_asset.kind is MediaKind.VIDEO:
+            return getattr(self, "_video_source_size", None)
+        return super()._source_media_size()
 
     def _source_preview_image(self):
         if self.current_asset is None:
@@ -156,7 +166,7 @@ class PreviewReadyMainWindow(LiveDialogMixin, MainWindow):
         source = self._source_preview_image()
         if source.isNull():
             return source
-        return apply_preview_edits(source, self._current_edits())
+        return apply_preview_edits(source, self._current_edits(), self._source_media_size())
 
     def _refresh_pending_preview(self) -> None:
         if not hasattr(self, "video_widget") or self.current_asset is None:

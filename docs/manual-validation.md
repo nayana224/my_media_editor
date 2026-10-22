@@ -3,14 +3,14 @@
 ## 1. 확인할 실행 파일
 
 PR의 최신 성공 Actions 실행에서 `linux-x86_64` artifact를 다운로드하고 ZIP을 풉니다.
-그 안의 `MyMediaEditor-0.1.1-x86_64.AppImage`는 Ubuntu 22.04에서 만든 배포본입니다.
+그 안의 `MyMediaEditor-0.1.2-x86_64.AppImage`는 Ubuntu 22.04에서 만든 배포본입니다.
 Ubuntu 24에서 소스를 실행하거나 직접 다시 빌드한 결과와 혼동하지 마세요.
 
 AppImage를 보관한 폴더에서 터미널을 열어 실행합니다.
 
 ```bash
-chmod +x MyMediaEditor-0.1.1-x86_64.AppImage
-APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage
+chmod +x MyMediaEditor-0.1.2-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.2-x86_64.AppImage
 ```
 
 `APPIMAGE_EXTRACT_AND_RUN=1`은 FUSE 설치 없이 실행하도록 합니다.
@@ -20,7 +20,7 @@ Python, PySide6, FFmpeg를 추가 설치하지 않습니다.
 ## 2. 자동 진단 먼저 실행
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage \
+APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.2-x86_64.AppImage \
   --self-test --self-test-report "$PWD/ubuntu24-check.json"
 echo $?
 ```
@@ -67,13 +67,13 @@ echo "$XDG_SESSION_TYPE"
 Wayland 세션에서 네이티브 Wayland를 명시해 검사할 때는 다음 명령을 사용합니다.
 
 ```bash
-QT_QPA_PLATFORM=wayland APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage
+QT_QPA_PLATFORM=wayland APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.2-x86_64.AppImage
 ```
 
 X11 또는 Wayland 세션의 XWayland 경로를 검사할 때는 다음 명령을 사용합니다.
 
 ```bash
-QT_QPA_PLATFORM=xcb APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage
+QT_QPA_PLATFORM=xcb APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.2-x86_64.AppImage
 ```
 
 X11 세션에서 `QT_QPA_PLATFORM=wayland`를 설정하는 것은 유효한 Wayland 검증이 아닙니다.
@@ -84,7 +84,7 @@ CI의 Xvfb 검증도 실제 Wayland나 스피커 검증을 대신하지 않습�
 실행 로그를 남기려면 다음처럼 실행합니다.
 
 ```bash
-APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.1-x86_64.AppImage > ubuntu24-app.log 2>&1
+APPIMAGE_EXTRACT_AND_RUN=1 ./MyMediaEditor-0.1.2-x86_64.AppImage > ubuntu24-app.log 2>&1
 ```
 
 Ubuntu 버전, `XDG_SESSION_TYPE` 결과, 어떤 파일에 어떤 조작을 했는지,
